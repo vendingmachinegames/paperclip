@@ -166,7 +166,7 @@ describe("fromRows", () => {
       },
     });
     // Must NOT produce type: "url" — Claude Code rejects it
-    expect((result as Record<string, Record<string, unknown>>)["http-server"].type).toBe("http");
+    expect((result as unknown as Record<string, Record<string, unknown>>)["http-server"].type).toBe("http");
   });
 
   it("includes env vars only when non-empty", () => {
