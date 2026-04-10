@@ -46,7 +46,7 @@ describe("toRows", () => {
     expect(rows[0].name).toBe("my-server");
     expect(rows[0].transport).toBe("stdio");
     expect(rows[0].command).toBe("node");
-    expect(rows[0].args).toBe("server.js, --stdio");
+    expect(rows[0].args).toBe("server.js\n--stdio");
   });
 
   it("parses an SSE server", () => {
@@ -91,6 +91,43 @@ describe("fromRows", () => {
     expect(fromRows([])).toBeUndefined();
   });
 
+  it("skips stdio rows with empty command", () => {
+    const rows = [{
+      uid: "1",
+      name: "broken",
+      transport: "stdio" as const,
+      command: "  ",
+      args: "",
+      url: "",
+      envRows: [{ key: "", value: "" }],
+      open: true,
+    }];
+    expect(fromRows(rows)).toBeUndefined();
+  });
+
+  it("skips network rows with empty url", () => {
+    const rows = [{
+      uid: "1",
+      name: "broken-sse",
+      transport: "sse" as const,
+      command: "",
+      args: "",
+      url: "",
+      envRows: [{ key: "", value: "" }],
+      open: true,
+    }, {
+      uid: "2",
+      name: "broken-http",
+      transport: "http" as const,
+      command: "",
+      args: "",
+      url: "  ",
+      envRows: [{ key: "", value: "" }],
+      open: true,
+    }];
+    expect(fromRows(rows)).toBeUndefined();
+  });
+
   it("skips rows with empty names", () => {
     const rows = toRows(undefined);
     // Add a row with no name
@@ -113,7 +150,7 @@ describe("fromRows", () => {
       name: "my-server",
       transport: "stdio" as const,
       command: "npx",
-      args: "ts-node, server.ts, --stdio",
+      args: "ts-node\nserver.ts\n--stdio",
       url: "",
       envRows: [{ key: "", value: "" }],
       open: true,
@@ -205,6 +242,24 @@ describe("fromRows", () => {
     const result = fromRows(rows)!;
     expect(result["no-env"]).toEqual({ type: "sse", url: "http://localhost/sse" });
     expect("env" in result["no-env"]).toBe(false);
+  });
+
+  it("preserves commas inside arguments", () => {
+    const rows = [{
+      uid: "1",
+      name: "comma-args",
+      transport: "stdio" as const,
+      command: "node",
+      args: "/tmp/my,folder\n--config=a,b",
+      url: "",
+      envRows: [{ key: "", value: "" }],
+      open: true,
+    }];
+    const result = fromRows(rows)!;
+    expect(result["comma-args"]).toEqual({
+      command: "node",
+      args: ["/tmp/my,folder", "--config=a,b"],
+    });
   });
 
   it("round-trips a mixed config correctly", () => {

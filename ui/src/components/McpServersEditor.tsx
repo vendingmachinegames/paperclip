@@ -66,7 +66,7 @@ export function toRows(servers: McpServersMap | undefined): ServerRow[] {
       name,
       transport,
       command: typeof raw.command === "string" ? raw.command : "",
-      args: Array.isArray(raw.args) ? (raw.args as string[]).join(", ") : "",
+      args: Array.isArray(raw.args) ? (raw.args as string[]).join("\n") : "",
       url: typeof raw.url === "string" ? raw.url : "",
       envRows: [...envEntries, { key: "", value: "" }],
       open: true,
@@ -87,14 +87,16 @@ export function fromRows(rows: ServerRow[]): McpServersMap | undefined {
     const hasEnv = Object.keys(env).length > 0;
 
     if (row.transport === "sse" || row.transport === "http") {
+      if (!row.url.trim()) continue;
       map[name] = {
         type: row.transport,
         url: row.url,
         ...(hasEnv ? { env } : {}),
       };
     } else {
+      if (!row.command.trim()) continue;
       const args = row.args
-        .split(",")
+        .split("\n")
         .map((a) => a.trim())
         .filter(Boolean);
       map[name] = {
@@ -170,6 +172,7 @@ export function McpServersEditor({
       },
     ];
     setRows(next);
+    emit(next);
   }
 
   function updateEnvRow(
@@ -325,11 +328,12 @@ export function McpServersEditor({
                   <div>
                     <label className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
                       Arguments
-                      <HintIcon text="Comma-separated arguments passed to the command." />
+                      <HintIcon text="One argument per line. Passed to the command in order." />
                     </label>
-                    <input
-                      className={inputClass}
-                      placeholder="e.g. /path/to/server.js, --stdio"
+                    <textarea
+                      className={cn(inputClass, "resize-y min-h-[2.25rem]")}
+                      rows={Math.max(2, row.args.split("\n").length)}
+                      placeholder={"e.g.\n/path/to/server.js\n--stdio"}
                       value={row.args}
                       onChange={(e) =>
                         updateRow(index, { args: e.target.value })
