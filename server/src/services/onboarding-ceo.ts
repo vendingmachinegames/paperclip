@@ -1,9 +1,12 @@
 import type { Db } from "@paperclipai/db";
 import { issueComments } from "@paperclipai/db";
 import { agentService } from "./agents.js";
+import { agentInstructionsService } from "./agent-instructions.js";
+import { loadDefaultAgentInstructionsBundle } from "./default-agent-instructions.js";
 
 /**
- * One-shot seed for a brand-new company: creates a CEO agent and posts a
+ * One-shot seed for a brand-new company: creates a CEO agent, materializes
+ * the office-hours onboarding instructions bundle to disk, and posts a
  * welcome message in the Boardroom authored by that agent. The CEO is
  * created in "paused" state so no heartbeat fires until the founder has
  * configured the adapter (API key, command, etc.).
@@ -17,6 +20,7 @@ export async function seedOnboardingCeo(params: {
 }) {
   const { db, companyId, boardroomIssueId } = params;
   const agents = agentService(db);
+  const instructions = agentInstructionsService();
 
   const ceo = await agents.create(companyId, {
     name: "CEO",
@@ -31,6 +35,18 @@ export async function seedOnboardingCeo(params: {
     permissions: {},
   });
 
+  // Materialize the onboarding-variant bundle. The file that lands on
+  // disk as HEARTBEAT.md contains the office-hours interview prompt;
+  // when the company graduates out of draft, a single content swap
+  // flips it to the steady-state heartbeat.
+  const files = await loadDefaultAgentInstructionsBundle("ceo", "onboarding");
+  const { adapterConfig: materializedAdapterConfig } = await instructions.materializeManagedBundle(
+    ceo,
+    files,
+    { entryFile: "AGENTS.md", replaceExisting: false },
+  );
+  const updatedCeo = await agents.update(ceo.id, { adapterConfig: materializedAdapterConfig });
+
   await db.insert(issueComments).values({
     companyId,
     issueId: boardroomIssueId,
@@ -38,7 +54,7 @@ export async function seedOnboardingCeo(params: {
     body: welcomeBody(),
   });
 
-  return { ceo };
+  return { ceo: updatedCeo ?? ceo };
 }
 
 function welcomeBody(): string {
