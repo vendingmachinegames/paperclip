@@ -1,6 +1,9 @@
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "@/lib/router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import type { Company } from "@paperclipai/shared";
+import { companiesApi } from "./api/companies";
 import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { authApi } from "./api/auth";
@@ -240,7 +243,6 @@ function OnboardingRoutePage() {
 
 function CompanyRootRedirect() {
   const { companies, selectedCompany, loading } = useCompany();
-  const location = useLocation();
 
   if (loading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
@@ -248,18 +250,74 @@ function CompanyRootRedirect() {
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
-    return <NoCompaniesStartPage />;
+    return <FirstVisitBootstrap />;
   }
 
   return <Navigate to={`/${targetCompany.slug}/dashboard`} replace />;
+}
+
+function FirstVisitBootstrap() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { setSelectedCompanyId } = useCompany();
+  const didFireRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
+
+  useEffect(() => {
+    if (didFireRef.current) return;
+    didFireRef.current = true;
+    (async () => {
+      try {
+        const company = await companiesApi.createDraft();
+        // Seed the cache so Layout / Sidebar / Boardroom see the new
+        // company before the refetch completes, avoiding a brief
+        // "unknown slug" flash on the destination route.
+        queryClient.setQueryData<Company[]>(queryKeys.companies.all, (prev) =>
+          prev ? [...prev, company] : [company],
+        );
+        setSelectedCompanyId(company.id);
+        // Kick off a fresh fetch in the background so any server-side
+        // enrichment (spend rollups, logo, etc.) arrives.
+        queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+        navigate(`/${company.slug}/boardroom`, { replace: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create workspace";
+        // 403 means we're in a deployment mode where the browser user
+        // isn't allowed to auto-provision (hosted/auth mode without
+        // instance admin). Fall back to the classic entry page.
+        if (/403|forbidden/i.test(message)) {
+          setForbidden(true);
+        } else {
+          setError(message);
+        }
+      }
+    })();
+  }, [navigate, queryClient, setSelectedCompanyId]);
+
+  if (forbidden) {
+    return <NoCompaniesStartPage />;
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="rounded-lg border border-destructive/30 bg-card p-6">
+          <h1 className="text-xl font-semibold">Couldn't open your workspace</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{error}</p>
+          <div className="mt-4">
+            <Button onClick={() => window.location.reload()}>Retry</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">
+      Opening your workspace…
+    </div>
+  );
 }
 
 function UnprefixedBoardRedirect() {
