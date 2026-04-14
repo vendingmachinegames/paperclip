@@ -406,6 +406,7 @@ export {
 
 export {
   createCompanySchema,
+  createDraftCompanySchema,
   updateCompanySchema,
   updateCompanyBrandingSchema,
   feedbackTargetTypeSchema,
@@ -413,6 +414,7 @@ export {
   feedbackVoteValueSchema,
   upsertIssueFeedbackVoteSchema,
   type CreateCompany,
+  type CreateDraftCompany,
   type UpdateCompany,
   type UpdateCompanyBranding,
   type UpsertIssueFeedbackVote,

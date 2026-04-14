@@ -6,6 +6,7 @@ import {
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
   createCompanySchema,
+  createDraftCompanySchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
@@ -292,6 +293,28 @@ export function companyRoutes(db: Db, storage?: StorageService) {
         req.actor.userId ?? "board",
       );
     }
+    res.status(201).json(company);
+  });
+
+  router.post("/draft", validate(createDraftCompanySchema), async (req, res) => {
+    assertBoard(req);
+    if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
+      throw forbidden("Instance admin required");
+    }
+    const company = await svc.create({
+      name: req.body.name ?? "Untitled Company",
+      draft: true,
+    });
+    await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    await logActivity(db, {
+      companyId: company.id,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      action: "company.draft_created",
+      entityType: "company",
+      entityId: company.id,
+      details: { slug: company.slug },
+    });
     res.status(201).json(company);
   });
 

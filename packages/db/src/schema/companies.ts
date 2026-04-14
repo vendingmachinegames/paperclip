@@ -1,12 +1,17 @@
+import { sql } from "drizzle-orm";
 import { pgTable, uuid, text, integer, timestamp, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const companies = pgTable(
   "companies",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    slug: text("slug")
+      .notNull()
+      .default(sql`gen_random_uuid()::text`),
     name: text("name").notNull(),
     description: text("description"),
     status: text("status").notNull().default("active"),
+    isDraft: boolean("is_draft").notNull().default(false),
     pauseReason: text("pause_reason"),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     issuePrefix: text("issue_prefix").notNull().default("PAP"),
@@ -28,5 +33,6 @@ export const companies = pgTable(
   },
   (table) => ({
     issuePrefixUniqueIdx: uniqueIndex("companies_issue_prefix_idx").on(table.issuePrefix),
+    slugUniqueIdx: uniqueIndex("companies_slug_idx").on(table.slug),
   }),
 );

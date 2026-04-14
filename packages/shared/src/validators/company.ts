@@ -13,6 +13,12 @@ export const createCompanySchema = z.object({
 
 export type CreateCompany = z.infer<typeof createCompanySchema>;
 
+export const createDraftCompanySchema = z.object({
+  name: z.string().min(1).optional(),
+}).strict();
+
+export type CreateDraftCompany = z.infer<typeof createDraftCompanySchema>;
+
 export const updateCompanySchema = createCompanySchema
   .partial()
   .extend({

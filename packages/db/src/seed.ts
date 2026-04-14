@@ -11,6 +11,7 @@ console.log("Seeding database...");
 const [company] = await db
   .insert(companies)
   .values({
+    slug: "paperclip-demo",
     name: "Paperclip Demo Co",
     description: "A demo autonomous company",
     status: "active",
