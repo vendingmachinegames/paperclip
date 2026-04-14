@@ -3487,7 +3487,18 @@ export function heartbeatService(db: Db) {
           try {
             const issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
             if (issueComment) {
-              await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
+              // Conversation-kind issues (the Boardroom) are chat surfaces,
+              // not task threads. The agent's actual reply is already in
+              // the stream; the run-summary recap would just clutter.
+              const issueKindRow = await db
+                .select({ kind: issues.kind })
+                .from(issues)
+                .where(eq(issues.id, issueId))
+                .limit(1);
+              const isConversation = issueKindRow[0]?.kind === "conversation";
+              if (!isConversation) {
+                await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
+              }
             }
           } catch (err) {
             await onLog(

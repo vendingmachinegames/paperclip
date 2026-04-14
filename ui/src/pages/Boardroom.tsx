@@ -59,6 +59,9 @@ export function Boardroom() {
     queryKey: company ? queryKeys.agents.list(company.id) : ["agents", "__idle__"],
     queryFn: () => agentsApi.list(company!.id),
     enabled: Boolean(company),
+    // Poll faster than comments so the typing indicator appears/
+    // disappears promptly when an agent's heartbeat starts/finishes.
+    refetchInterval: 2_500,
   });
 
   const agentById = useMemo(() => {
@@ -66,6 +69,11 @@ export function Boardroom() {
     for (const agent of agentsQuery.data ?? []) map.set(agent.id, agent);
     return map;
   }, [agentsQuery.data]);
+
+  const runningAgents = useMemo(
+    () => (agentsQuery.data ?? []).filter((a) => a.status === "running"),
+    [agentsQuery.data],
+  );
 
   const [draft, setDraft] = useState("");
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -140,6 +148,9 @@ export function Boardroom() {
                 agent={comment.authorAgentId ? agentById.get(comment.authorAgentId) ?? null : null}
               />
             ))}
+            {runningAgents.map((agent) => (
+              <TypingIndicator key={agent.id} agent={agent} />
+            ))}
           </ol>
         )}
       </div>
@@ -183,6 +194,32 @@ export function Boardroom() {
         )}
       </div>
     </div>
+  );
+}
+
+function TypingIndicator({ agent }: { agent: Agent }) {
+  return (
+    <li className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Identity name={agent.name} size="xs" />
+        <span aria-hidden>·</span>
+        <span>typing</span>
+      </div>
+      <div className="inline-flex w-fit items-center gap-1 rounded-md border border-border bg-card px-3 py-2 text-sm">
+        <TypingDot delay="0ms" />
+        <TypingDot delay="150ms" />
+        <TypingDot delay="300ms" />
+      </div>
+    </li>
+  );
+}
+
+function TypingDot({ delay }: { delay: string }) {
+  return (
+    <span
+      className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/60"
+      style={{ animationDelay: delay }}
+    />
   );
 }
 

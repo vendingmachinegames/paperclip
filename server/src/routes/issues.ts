@@ -2345,6 +2345,38 @@ export function issueRoutes(
         });
       }
 
+      // Boardroom auto-wake: for conversation-kind issues, a user reply
+      // without an explicit @mention should still wake the agents so the
+      // chat feels like a chat instead of a bulletin board. Task issues
+      // keep the old @mention-required behavior (an assignee already
+      // drives those via the assigneeId branch above).
+      if (
+        currentIssue.kind === "conversation"
+        && !actorIsAgent
+        && wakeups.size === 0
+      ) {
+        const allAgents = await agentsSvc.list(currentIssue.companyId);
+        for (const agent of allAgents) {
+          if (agent.status === "terminated" || agent.status === "paused") continue;
+          wakeups.set(agent.id, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "conversation_comment",
+            payload: { issueId: id, commentId: comment.id },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: id,
+              taskId: id,
+              commentId: comment.id,
+              wakeCommentId: comment.id,
+              wakeReason: "conversation_comment",
+              source: "comment.conversation",
+            },
+          });
+        }
+      }
+
       for (const [agentId, wakeup] of wakeups.entries()) {
         heartbeat
           .wakeup(agentId, wakeup)
