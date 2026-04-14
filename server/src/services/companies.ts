@@ -265,12 +265,39 @@ export function companyService(db: Db) {
           }
         }
 
-        const updated = await tx
-          .update(companies)
-          .set({ ...companyPatch, updatedAt: new Date() })
-          .where(eq(companies.id, id))
-          .returning()
-          .then((rows) => rows[0] ?? null);
+        const slugChanging =
+          companyPatch.slug !== undefined && companyPatch.slug !== existing.slug;
+        if (slugChanging) {
+          await tx
+            .insert(companySlugRedirects)
+            .values({
+              oldSlug: existing.slug,
+              companyId: id,
+              retiredAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: companySlugRedirects.oldSlug,
+              set: { companyId: id, retiredAt: new Date() },
+            });
+          await tx
+            .delete(companySlugRedirects)
+            .where(eq(companySlugRedirects.oldSlug, companyPatch.slug!));
+        }
+
+        let updated: typeof companies.$inferSelect | null = null;
+        try {
+          updated = await tx
+            .update(companies)
+            .set({ ...companyPatch, updatedAt: new Date() })
+            .where(eq(companies.id, id))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+        } catch (error) {
+          if (isSlugConflict(error)) {
+            throw unprocessable(`Slug "${companyPatch.slug}" is already in use`);
+          }
+          throw error;
+        }
         if (!updated) return null;
 
         if (logoAssetId === null) {

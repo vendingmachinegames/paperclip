@@ -1,6 +1,39 @@
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 
+// Slugs that cannot be used as company identifiers because they collide
+// with top-level UI routes (BOARD_ROUTE_ROOTS + GLOBAL_ROUTE_ROOTS in
+// ui/src/lib/company-routes.ts). Keep in sync when adding new roots.
+export const COMPANY_SLUG_RESERVED: ReadonlySet<string> = new Set([
+  "dashboard",
+  "companies",
+  "company",
+  "skills",
+  "org",
+  "agents",
+  "projects",
+  "execution-workspaces",
+  "issues",
+  "routines",
+  "goals",
+  "approvals",
+  "costs",
+  "usage",
+  "activity",
+  "inbox",
+  "design-guide",
+  "auth",
+  "invite",
+  "board-claim",
+  "cli-auth",
+  "docs",
+  "instance",
+  "onboarding",
+  "api",
+  "assets",
+  "chat",
+]);
+
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;
 export type DeploymentMode = (typeof DEPLOYMENT_MODES)[number];
 

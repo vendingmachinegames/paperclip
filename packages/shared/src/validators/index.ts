@@ -17,6 +17,7 @@ export {
 } from "./budget.js";
 
 export {
+  companySlugSchema,
   createCompanySchema,
   createDraftCompanySchema,
   updateCompanySchema,

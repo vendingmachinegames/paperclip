@@ -1,6 +1,7 @@
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
 export {
   COMPANY_STATUSES,
+  COMPANY_SLUG_RESERVED,
   DEPLOYMENT_MODES,
   DEPLOYMENT_EXPOSURES,
   BIND_MODES,
@@ -405,6 +406,7 @@ export {
 } from "./validators/index.js";
 
 export {
+  companySlugSchema,
   createCompanySchema,
   createDraftCompanySchema,
   updateCompanySchema,
