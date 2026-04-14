@@ -2,6 +2,7 @@ export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapte
 export {
   COMPANY_STATUSES,
   COMPANY_SLUG_RESERVED,
+  ISSUE_KINDS,
   DEPLOYMENT_MODES,
   DEPLOYMENT_EXPOSURES,
   BIND_MODES,

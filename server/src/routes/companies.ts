@@ -18,6 +18,7 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  boardroomService,
   budgetService,
   companyPortabilityService,
   companyService,
@@ -31,6 +32,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const router = Router();
   const svc = companyService(db);
   const agents = agentService(db);
+  const boardroom = boardroomService(db);
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
   const budgets = budgetService(db);
@@ -272,6 +274,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     }
     const company = await svc.create(req.body);
     await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    await boardroom.getOrCreate(company.id);
     await logActivity(db, {
       companyId: company.id,
       actorType: "user",
@@ -294,6 +297,18 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       );
     }
     res.status(201).json(company);
+  });
+
+  router.get("/:companyId/boardroom", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    const issue = await boardroom.getOrCreate(companyId);
+    res.json({ boardroom: issue });
   });
 
   router.get("/by-slug/:slug", async (req, res) => {
@@ -320,6 +335,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       draft: true,
     });
     await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    await boardroom.getOrCreate(company.id);
     await logActivity(db, {
       companyId: company.id,
       actorType: "user",

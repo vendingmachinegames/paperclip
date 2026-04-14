@@ -1,6 +1,9 @@
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 
+export const ISSUE_KINDS = ["task", "conversation"] as const;
+export type IssueKind = (typeof ISSUE_KINDS)[number];
+
 // Slugs that cannot be used as company identifiers because they collide
 // with top-level UI routes (BOARD_ROUTE_ROOTS + GLOBAL_ROUTE_ROOTS in
 // ui/src/lib/company-routes.ts). Keep in sync when adding new roots.

@@ -29,6 +29,11 @@ vi.mock("../services/index.js", () => ({
   agentService: () => ({
     getById: vi.fn(),
   }),
+  boardroomService: () => ({
+    getOrCreate: vi.fn(),
+    findForCompany: vi.fn(),
+    create: vi.fn(),
+  }),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(),
     listFeedbackTraces: vi.fn(),

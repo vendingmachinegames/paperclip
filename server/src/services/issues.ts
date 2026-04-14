@@ -911,7 +911,7 @@ export function issueService(db: Db) {
 
   return {
     list: async (companyId: string, filters?: IssueFilters) => {
-      const conditions = [eq(issues.companyId, companyId)];
+      const conditions = [eq(issues.companyId, companyId), eq(issues.kind, "task")];
       const limit = typeof filters?.limit === "number" && Number.isFinite(filters.limit)
         ? Math.max(1, Math.floor(filters.limit))
         : undefined;
@@ -1160,6 +1160,7 @@ export function issueService(db: Db) {
     countUnreadTouchedByUser: async (companyId: string, userId: string, status?: string) => {
       const conditions = [
         eq(issues.companyId, companyId),
+        eq(issues.kind, "task"),
         isNull(issues.hiddenAt),
         unreadForUserCondition(companyId, userId),
         ne(issues.originKind, "routine_execution"),

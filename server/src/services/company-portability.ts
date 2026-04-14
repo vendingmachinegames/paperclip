@@ -58,6 +58,7 @@ import { generateReadme } from "./company-export-readme.js";
 import { renderOrgChartPng, type OrgNode } from "../routes/org-chart-svg.js";
 import { companySkillService } from "./company-skills.js";
 import { companyService } from "./companies.js";
+import { boardroomService } from "./boardroom.js";
 import { validateCron } from "./cron.js";
 import { issueService } from "./issues.js";
 import { projectService } from "./projects.js";
@@ -2747,6 +2748,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
   const projects = projectService(db);
   const issues = issueService(db);
   const companySkills = companySkillService(db);
+  const boardroom = boardroomService(db);
 
   async function resolveSource(source: CompanyPortabilityPreview["source"]): Promise<ResolvedSource> {
     if (source.type === "inline") {
@@ -3899,6 +3901,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
       } else {
         await access.ensureMembership(created.id, "user", actorUserId ?? "board", "owner", "active");
       }
+      await boardroom.getOrCreate(created.id);
       targetCompany = created;
       companyAction = "created";
     } else {

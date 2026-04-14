@@ -43,6 +43,7 @@ function registerServiceMocks() {
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
     agentService: () => mockAgentService,
+    boardroomService: () => ({ getOrCreate: vi.fn(), findForCompany: vi.fn(), create: vi.fn() }),
     budgetService: () => mockBudgetService,
     companyPortabilityService: () => mockCompanyPortabilityService,
     companyService: () => mockCompanyService,
