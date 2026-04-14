@@ -296,6 +296,20 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     res.status(201).json(company);
   });
 
+  router.get("/by-slug/:slug", async (req, res) => {
+    const slug = String(req.params.slug);
+    const resolved = await svc.getBySlug(slug);
+    if (!resolved) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    assertCompanyAccess(req, resolved.company.id);
+    res.json({
+      company: resolved.company,
+      redirectedFromSlug: resolved.redirected ? slug.toLowerCase() : null,
+    });
+  });
+
   router.post("/draft", validate(createDraftCompanySchema), async (req, res) => {
     assertBoard(req);
     if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {

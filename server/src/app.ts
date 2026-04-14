@@ -32,6 +32,7 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
+import { companySlugRedirectMiddleware } from "./routes/company-slug-redirect.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -248,6 +249,10 @@ export async function createApp(
   app.use(pluginUiStaticRoutes(db, {
     localPluginDir: opts.localPluginDir ?? DEFAULT_LOCAL_PLUGIN_DIR,
   }));
+
+  // Rewrite retired company-slug URLs to their current canonical slug
+  // before the SPA catch-all serves index.html.
+  app.use(companySlugRedirectMiddleware(db));
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   if (opts.uiMode === "static") {

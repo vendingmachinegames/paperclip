@@ -231,6 +231,29 @@ export function companyService(db: Db) {
       return enrichCompany(hydrated);
     },
 
+    getBySlug: async (slug: string) => {
+      const normalized = slug.toLowerCase();
+      const liveRow = await getCompanyQuery(db)
+        .where(eq(companies.slug, normalized))
+        .then((rows) => rows[0] ?? null);
+      if (liveRow) {
+        const [hydrated] = await hydrateCompanySpend([liveRow], db);
+        return { company: enrichCompany(hydrated), redirected: false as const };
+      }
+      const redir = await db
+        .select({ companyId: companySlugRedirects.companyId })
+        .from(companySlugRedirects)
+        .where(eq(companySlugRedirects.oldSlug, normalized))
+        .limit(1);
+      if (redir.length === 0) return null;
+      const resolved = await getCompanyQuery(db)
+        .where(eq(companies.id, redir[0]!.companyId))
+        .then((rows) => rows[0] ?? null);
+      if (!resolved) return null;
+      const [hydrated] = await hydrateCompanySpend([resolved], db);
+      return { company: enrichCompany(hydrated), redirected: true as const };
+    },
+
     create: async (data: CompanyCreateInput) => {
       const created = await createCompanyWithUniqueIdentifiers(data);
       const row = await getCompanyQuery(db)
