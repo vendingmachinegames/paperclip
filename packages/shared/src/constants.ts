@@ -35,6 +35,7 @@ export const COMPANY_SLUG_RESERVED: ReadonlySet<string> = new Set([
   "api",
   "assets",
   "chat",
+  "boardroom",
 ]);
 
 export const DEPLOYMENT_MODES = ["local_trusted", "authenticated"] as const;

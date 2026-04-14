@@ -7,6 +7,7 @@ import type {
   CompanyPortabilityImportResult,
   CompanyPortabilityPreviewRequest,
   CompanyPortabilityPreviewResult,
+  Issue,
   UpdateCompanyBranding,
 } from "@paperclipai/shared";
 import { api } from "./client";
@@ -23,6 +24,14 @@ export const companiesApi = {
     budgetMonthlyCents?: number;
   }) =>
     api.post<Company>("/companies", data),
+  createDraft: (data?: { name?: string }) =>
+    api.post<Company>("/companies/draft", data ?? {}),
+  getBySlug: (slug: string) =>
+    api.get<{ company: Company; redirectedFromSlug: string | null }>(
+      `/companies/by-slug/${encodeURIComponent(slug)}`,
+    ),
+  getBoardroom: (companyId: string) =>
+    api.get<{ boardroom: Issue }>(`/companies/${companyId}/boardroom`),
   update: (
     companyId: string,
     data: Partial<

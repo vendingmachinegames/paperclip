@@ -1,0 +1,216 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "@/lib/router";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import type { Agent, IssueComment } from "@paperclipai/shared";
+import { companiesApi } from "@/api/companies";
+import { issuesApi } from "@/api/issues";
+import { agentsApi } from "@/api/agents";
+import { useCompany } from "@/context/CompanyContext";
+import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { queryKeys } from "@/lib/queryKeys";
+import { Identity } from "@/components/Identity";
+import { MarkdownBody } from "@/components/MarkdownBody";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { timeAgo } from "@/lib/timeAgo";
+import { cn } from "@/lib/utils";
+
+/**
+ * Minimal Boardroom view — renders the company-wide group conversation.
+ *
+ * Slice 3 is intentionally bare: fetch the conversation issue + comments,
+ * show them in order, offer a composer. Live streaming, tool-call cards,
+ * @mention autocomplete, feedback, reassignment, and artifact renderers
+ * come in later slices alongside the chat plugin.
+ */
+export function Boardroom() {
+  const { companySlug } = useParams<{ companySlug?: string }>();
+  const { companies } = useCompany();
+  const { setBreadcrumbs } = useBreadcrumbs();
+  const queryClient = useQueryClient();
+
+  const company = useMemo(() => {
+    if (!companySlug) return null;
+    const normalized = companySlug.toLowerCase();
+    return companies.find((c) => c.slug.toLowerCase() === normalized) ?? null;
+  }, [companies, companySlug]);
+
+  useEffect(() => {
+    setBreadcrumbs([{ label: "Boardroom" }]);
+  }, [setBreadcrumbs]);
+
+  const boardroomQuery = useQuery({
+    queryKey: company ? queryKeys.companies.boardroom(company.id) : ["boardroom", "__idle__"],
+    queryFn: () => companiesApi.getBoardroom(company!.id),
+    enabled: Boolean(company),
+  });
+  const boardroomIssue = boardroomQuery.data?.boardroom ?? null;
+
+  const commentsQuery = useQuery({
+    queryKey: company
+      ? queryKeys.companies.boardroomComments(company.id)
+      : ["boardroom-comments", "__idle__"],
+    queryFn: () => issuesApi.listComments(boardroomIssue!.id, { order: "asc" }),
+    enabled: Boolean(boardroomIssue),
+    refetchInterval: 5_000,
+  });
+
+  const agentsQuery = useQuery({
+    queryKey: company ? queryKeys.agents.list(company.id) : ["agents", "__idle__"],
+    queryFn: () => agentsApi.list(company!.id),
+    enabled: Boolean(company),
+  });
+
+  const agentById = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const agent of agentsQuery.data ?? []) map.set(agent.id, agent);
+    return map;
+  }, [agentsQuery.data]);
+
+  const [draft, setDraft] = useState("");
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const lastCommentIdRef = useRef<string | null>(null);
+
+  const addComment = useMutation({
+    mutationFn: async (body: string) => {
+      if (!boardroomIssue) throw new Error("Boardroom not ready");
+      return issuesApi.addComment(boardroomIssue.id, body);
+    },
+    onSuccess: () => {
+      setDraft("");
+      if (company) {
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.companies.boardroomComments(company.id),
+        });
+      }
+    },
+  });
+
+  // Auto-scroll to bottom when new comments arrive.
+  useEffect(() => {
+    const comments = commentsQuery.data ?? [];
+    if (comments.length === 0) return;
+    const last = comments[comments.length - 1]!;
+    if (last.id !== lastCommentIdRef.current) {
+      lastCommentIdRef.current = last.id;
+      const el = scrollerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [commentsQuery.data]);
+
+  if (!company) {
+    return (
+      <div className="mx-auto max-w-2xl py-10 text-sm text-muted-foreground">
+        Select a company to view its Boardroom.
+      </div>
+    );
+  }
+
+  if (boardroomQuery.isLoading) {
+    return <div className="p-6 text-sm text-muted-foreground">Loading Boardroom…</div>;
+  }
+
+  const comments = commentsQuery.data ?? [];
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="border-b border-border px-4 py-3 md:px-6">
+        <h1 className="text-base font-semibold">Boardroom</h1>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {company.name} · everyone in this company can post and read here
+        </p>
+      </header>
+
+      <div
+        ref={scrollerRef}
+        className="flex-1 overflow-y-auto px-4 py-4 md:px-6"
+      >
+        {comments.length === 0 ? (
+          <div className="mx-auto max-w-lg rounded-md border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+            The Boardroom is empty. Anything posted here is visible to the
+            user and every agent on this company. Start the conversation —
+            once the CEO agent is running, they'll reply in here.
+          </div>
+        ) : (
+          <ol className="mx-auto flex max-w-3xl flex-col gap-4">
+            {comments.map((comment) => (
+              <BoardroomMessage
+                key={comment.id}
+                comment={comment}
+                agent={comment.authorAgentId ? agentById.get(comment.authorAgentId) ?? null : null}
+              />
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <div className="border-t border-border px-4 py-3 md:px-6">
+        <form
+          className="mx-auto flex max-w-3xl items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = draft.trim();
+            if (!trimmed) return;
+            addComment.mutate(trimmed);
+          }}
+        >
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Post to the Boardroom… @mention an agent to ping them."
+            rows={2}
+            className="min-h-[52px] resize-none"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                const trimmed = draft.trim();
+                if (trimmed) addComment.mutate(trimmed);
+              }
+            }}
+          />
+          <Button
+            type="submit"
+            disabled={!draft.trim() || addComment.isPending}
+            className="shrink-0"
+          >
+            {addComment.isPending ? "Posting…" : "Post"}
+          </Button>
+        </form>
+        {addComment.error && (
+          <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">
+            {addComment.error instanceof Error ? addComment.error.message : "Failed to post"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BoardroomMessage({
+  comment,
+  agent,
+}: {
+  comment: IssueComment;
+  agent: Agent | null;
+}) {
+  const authorName = agent?.name ?? (comment.authorUserId ? "You" : "System");
+  const isAgent = Boolean(comment.authorAgentId);
+
+  return (
+    <li className={cn("flex flex-col gap-1")}>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Identity name={authorName} size="xs" />
+        <span aria-hidden>·</span>
+        <span>{timeAgo(new Date(comment.createdAt))}</span>
+        {isAgent && (
+          <span className="rounded-sm bg-muted px-1 py-px text-[10px] uppercase tracking-wide">
+            agent
+          </span>
+        )}
+      </div>
+      <div className="rounded-md border border-border bg-card px-3 py-2 text-sm">
+        <MarkdownBody>{comment.body}</MarkdownBody>
+      </div>
+    </li>
+  );
+}
