@@ -69,7 +69,7 @@ describeEmbeddedPostgres("seedOnboardingCeo()", () => {
     return { company, room };
   }
 
-  it("creates a CEO agent paused for adapter setup", async () => {
+  it("creates a CEO agent ready to run (idle, not paused)", async () => {
     const { company, room } = await freshCompanyWithBoardroom();
     const { ceo } = await seedOnboardingCeo({
       db,
@@ -79,8 +79,7 @@ describeEmbeddedPostgres("seedOnboardingCeo()", () => {
 
     expect(ceo.name).toBe("CEO");
     expect(ceo.role).toBe("ceo");
-    expect(ceo.status).toBe("paused");
-    expect(ceo.pauseReason).toBe("manual");
+    expect(ceo.status).toBe("idle");
     expect(ceo.adapterType).toBe("claude_local");
     expect(ceo.companyId).toBe(company.id);
   });

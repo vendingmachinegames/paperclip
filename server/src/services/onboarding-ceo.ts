@@ -8,8 +8,10 @@ import { loadDefaultAgentInstructionsBundle } from "./default-agent-instructions
  * One-shot seed for a brand-new company: creates a CEO agent, materializes
  * the office-hours onboarding instructions bundle to disk, and posts a
  * welcome message in the Boardroom authored by that agent. The CEO is
- * created in "paused" state so no heartbeat fires until the founder has
- * configured the adapter (API key, command, etc.).
+ * created idle — on local_trusted installs the claude_local adapter
+ * generally has what it needs out of the box, and failures will surface
+ * as a real heartbeat error rather than silent friction. If the adapter
+ * isn't set up, the first @mention will fail with a clear diagnostic.
  *
  * Called after the company + Boardroom exist.
  */
@@ -27,8 +29,7 @@ export async function seedOnboardingCeo(params: {
     role: "ceo",
     title: "Chief Executive Officer",
     icon: "briefcase",
-    status: "paused",
-    pauseReason: "manual",
+    status: "idle",
     adapterType: "claude_local",
     adapterConfig: {},
     runtimeConfig: {},
@@ -66,14 +67,15 @@ function welcomeBody(): string {
     "open.",
     "",
     "Before I start doing anything for you, I need to understand",
-    "what we're building. I'm going to feel blunt: my interview is",
+    "what we're building. I'm blunt on purpose: my interview is",
     "adapted from YC's [office-hours playbook](https://github.com/garrytan/gstack),",
-    "which is designed to push back on vague answers rather than",
-    "agreeing with them. That's the point.",
+    "which pushes back on vague answers rather than agreeing with",
+    "them.",
     "",
-    "I'm currently paused — until you configure my adapter, I can't",
-    "actually respond in this chat. You'll find me in the **Agents**",
-    "section in the sidebar. Once I'm configured and unpaused,",
-    "@mention me in here and I'll kick off the interview.",
+    "**First question:** Is this **a business you're trying to grow**,",
+    "or **a side project / experiment / learning exercise**? The",
+    "answer changes how hard I'll push back on you.",
+    "",
+    "Reply with `@CEO ...` when you're ready — I'll take it from there.",
   ].join("\n");
 }
