@@ -40,6 +40,8 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
+import { DEFAULT_OLLAMA_MODEL } from "@paperclipai/adapter-ollama-local";
+import { OllamaModelPicker } from "../adapters/ollama-local/model-picker";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import {
@@ -190,7 +192,8 @@ export function OnboardingWizard() {
     data: adapterModels,
     error: adapterModelsError,
     isLoading: adapterModelsLoading,
-    isFetching: adapterModelsFetching
+    isFetching: adapterModelsFetching,
+    refetch: refetchAdapterModels
   } = useQuery({
     queryKey: createdCompanyId
       ? queryKeys.agents.adapterModels(createdCompanyId, adapterType)
@@ -820,6 +823,10 @@ export function OnboardingWizard() {
                                 setModel(DEFAULT_CURSOR_LOCAL_MODEL);
                                 return;
                               }
+                              if (nextType === "ollama_local" && !model) {
+                                setModel(DEFAULT_OLLAMA_MODEL);
+                                return;
+                              }
                               if (nextType === "opencode_local") {
                                 if (!model.includes("/")) {
                                   setModel("");
@@ -842,8 +849,21 @@ export function OnboardingWizard() {
                     )}
                   </div>
 
-                  {/* Conditional adapter fields */}
-                  {isLocalAdapter && (
+                  {/* Ollama gets a rich model picker with live download progress. */}
+                  {adapterType === "ollama_local" && (
+                    <div className="space-y-2">
+                      <OllamaModelPicker
+                        installedModels={adapterModels ?? []}
+                        value={model}
+                        onChange={(v) => setModel(v)}
+                        loading={adapterModelsLoading || adapterModelsFetching}
+                        onRefresh={() => void refetchAdapterModels()}
+                      />
+                    </div>
+                  )}
+
+                  {/* Conditional adapter fields for every other local adapter. */}
+                  {isLocalAdapter && adapterType !== "ollama_local" && (
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">
