@@ -32,6 +32,9 @@ vi.mock("../telemetry.js", () => ({
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  companyService: () => ({
+    getById: vi.fn().mockResolvedValue({ id: "company-1" }),
+  }),
   companySkillService: () => mockCompanySkillService,
   logActivity: mockLogActivity,
 }));

@@ -8,7 +8,7 @@ import {
 } from "@paperclipai/shared";
 import { trackSkillImported } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
-import { accessService, agentService, companySkillService, logActivity } from "../services/index.js";
+import { accessService, agentService, companyService, companySkillService, logActivity } from "../services/index.js";
 import { forbidden } from "../errors.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -25,7 +25,13 @@ export function companySkillRoutes(db: Db) {
   const router = Router();
   const agents = agentService(db);
   const access = accessService(db);
+  const companies = companyService(db);
   const svc = companySkillService(db);
+
+  async function assertCompanyExists(companyId: string): Promise<boolean> {
+    const company = await companies.getById(companyId);
+    return Boolean(company);
+  }
 
   function canCreateAgents(agent: { permissions: Record<string, unknown> | null | undefined }) {
     if (!agent.permissions || typeof agent.permissions !== "object") return false;
@@ -84,6 +90,10 @@ export function companySkillRoutes(db: Db) {
   router.get("/companies/:companyId/skills", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+    if (!(await assertCompanyExists(companyId))) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
     const result = await svc.list(companyId);
     res.json(result);
   });
