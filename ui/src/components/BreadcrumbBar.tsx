@@ -16,7 +16,7 @@ import { Fragment, useMemo } from "react";
 import { PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { PluginLauncherOutlet, usePluginLaunchers } from "@/plugins/launchers";
 
-type GlobalToolbarContext = { companyId: string | null; companyPrefix: string | null };
+type GlobalToolbarContext = { companyId: string | null; companySlug: string | null };
 
 function GlobalToolbarPlugins({ context }: { context: GlobalToolbarContext }) {
   const { slots } = usePluginSlots({ slotTypes: ["globalToolbarButton"], companyId: context.companyId });
@@ -38,9 +38,9 @@ export function BreadcrumbBar() {
   const globalToolbarSlotContext = useMemo(
     () => ({
       companyId: selectedCompanyId ?? null,
-      companyPrefix: selectedCompany?.issuePrefix ?? null,
+      companySlug: selectedCompany?.slug ?? null,
     }),
-    [selectedCompanyId, selectedCompany?.issuePrefix],
+    [selectedCompanyId, selectedCompany?.slug],
   );
 
   const globalToolbarSlots = <GlobalToolbarPlugins context={globalToolbarSlotContext} />;

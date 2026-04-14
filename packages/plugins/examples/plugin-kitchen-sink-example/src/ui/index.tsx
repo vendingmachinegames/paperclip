@@ -248,12 +248,12 @@ const mutedTextStyle: CSSProperties = {
   lineHeight: 1.45,
 };
 
-function hostPath(companyPrefix: string | null | undefined, suffix: string): string {
-  return companyPrefix ? `/${companyPrefix}${suffix}` : suffix;
+function hostPath(companySlug: string | null | undefined, suffix: string): string {
+  return companySlug ? `/${companySlug}${suffix}` : suffix;
 }
 
-function pluginPagePath(companyPrefix: string | null | undefined): string {
-  return hostPath(companyPrefix, `/${PAGE_ROUTE}`);
+function pluginPagePath(companySlug: string | null | undefined): string {
+  return hostPath(companySlug, `/${PAGE_ROUTE}`);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -591,7 +591,7 @@ function KitchenSinkPageWidgets({ context }: { context: PluginPageProps["context
                 tone: "info",
                 action: {
                   label: "Go",
-                  href: hostPath(context.companyPrefix, "/dashboard"),
+                  href: hostPath(context.companySlug, "/dashboard"),
                 },
               })}
           >
@@ -1098,8 +1098,8 @@ function KitchenSinkTopRow({ context }: { context: PluginPageProps["context"] })
           <div style={mutedTextStyle}>
             The company sidebar entry opens this route directly, so the plugin feels like a first-class company page instead of a settings subpage.
           </div>
-          <a href={pluginPagePath(context.companyPrefix)} style={{ fontSize: "12px" }}>
-            {pluginPagePath(context.companyPrefix)}
+          <a href={pluginPagePath(context.companySlug)} style={{ fontSize: "12px" }}>
+            {pluginPagePath(context.companySlug)}
           </a>
         </Section>
         <Section title="Paperclip Animation">
@@ -1228,7 +1228,7 @@ function KitchenSinkHostIntegrationDemo({ context }: { context: PluginPageProps[
       <div style={subtleCardStyle}>
         <div style={rowStyle}>
           <strong>Company Route</strong>
-          <Pill label={pluginPagePath(context.companyPrefix)} />
+          <Pill label={pluginPagePath(context.companySlug)} />
         </div>
         <div style={mutedTextStyle}>
           This page is mounted as a real company route instead of living only under `/plugins/:pluginId`.
@@ -1260,7 +1260,7 @@ function KitchenSinkHostIntegrationDemo({ context }: { context: PluginPageProps[
                     </div>
                     <div>{run.id}</div>
                     {run.agentId ? (
-                      <a href={hostPath(context.companyPrefix, `/agents/${run.agentId}/runs/${run.id}`)}>
+                      <a href={hostPath(context.companySlug, `/agents/${run.agentId}/runs/${run.id}`)}>
                         Open run
                       </a>
                     ) : null}
@@ -1306,7 +1306,7 @@ function KitchenSinkEmbeddedApp({ context }: { context: PluginPageProps["context
   );
 }
 
-function KitchenSinkConsole({ context }: { context: { companyId: string | null; companyPrefix?: string | null; projectId?: string | null; entityId?: string | null; entityType?: string | null } }) {
+function KitchenSinkConsole({ context }: { context: { companyId: string | null; companySlug?: string | null; projectId?: string | null; entityId?: string | null; entityType?: string | null } }) {
   const companyId = context.companyId;
   const overview = usePluginOverview(companyId);
   const [companiesLimit, setCompaniesLimit] = useState(20);
@@ -1531,10 +1531,10 @@ function KitchenSinkConsole({ context }: { context: { companyId: string | null; 
 
       <Section title="UI Surfaces">
         <div style={rowStyle}>
-          <a href={pluginPagePath(context.companyPrefix)} style={{ fontSize: "12px" }}>Open plugin page</a>
+          <a href={pluginPagePath(context.companySlug)} style={{ fontSize: "12px" }}>Open plugin page</a>
           {projectRef ? (
             <a
-              href={hostPath(context.companyPrefix, `/projects/${projectRef}?tab=plugin:${PLUGIN_ID}:${SLOT_IDS.projectTab}`)}
+              href={hostPath(context.companySlug, `/projects/${projectRef}?tab=plugin:${PLUGIN_ID}:${SLOT_IDS.projectTab}`)}
               style={{ fontSize: "12px" }}
             >
               Open project tab
@@ -1542,7 +1542,7 @@ function KitchenSinkConsole({ context }: { context: { companyId: string | null; 
           ) : null}
           {selectedIssueId ? (
             <a
-              href={hostPath(context.companyPrefix, `/issues/${selectedIssueId}`)}
+              href={hostPath(context.companySlug, `/issues/${selectedIssueId}`)}
               style={{ fontSize: "12px" }}
             >
               Open selected issue
@@ -2217,7 +2217,7 @@ export function KitchenSinkDashboardWidget({ context }: PluginWidgetProps) {
         <div>Issues: {overview.data?.counts.issues ?? 0}</div>
       </div>
       <div style={rowStyle}>
-        <a href={pluginPagePath(context.companyPrefix)} style={{ fontSize: "12px" }}>Open page</a>
+        <a href={pluginPagePath(context.companySlug)} style={{ fontSize: "12px" }}>Open page</a>
         <button
           type="button"
           style={buttonStyle}
@@ -2236,7 +2236,7 @@ export function KitchenSinkDashboardWidget({ context }: PluginWidgetProps) {
 export function KitchenSinkSidebarLink({ context }: PluginSidebarProps) {
   const config = usePluginConfigData();
   if (config.data && config.data.showSidebarEntry === false) return null;
-  const href = pluginPagePath(context.companyPrefix);
+  const href = pluginPagePath(context.companySlug);
   const isActive = typeof window !== "undefined" && window.location.pathname === href;
   return (
     <a
@@ -2274,7 +2274,7 @@ export function KitchenSinkSidebarPanel() {
     <div style={{ ...layoutStack, ...subtleCardStyle, fontSize: "12px" }}>
       <strong>Kitchen Sink Panel</strong>
       <div>Recent plugin records: {overview.data?.recentRecords.length ?? 0}</div>
-      <a href={pluginPagePath(context.companyPrefix)}>Open plugin page</a>
+      <a href={pluginPagePath(context.companySlug)}>Open plugin page</a>
     </div>
   );
 }
@@ -2284,7 +2284,7 @@ export function KitchenSinkProjectSidebarItem({ context }: PluginProjectSidebarI
   if (config.data && config.data.showProjectSidebarItem === false) return null;
   return (
     <a
-      href={hostPath(context.companyPrefix, `/projects/${context.entityId}?tab=plugin:${PLUGIN_ID}:${SLOT_IDS.projectTab}`)}
+      href={hostPath(context.companySlug, `/projects/${context.entityId}?tab=plugin:${PLUGIN_ID}:${SLOT_IDS.projectTab}`)}
       style={{ fontSize: "12px", textDecoration: "none" }}
     >
       Kitchen Sink

@@ -43,7 +43,7 @@ export function Sidebar() {
 
   const pluginContext = {
     companyId: selectedCompanyId,
-    companyPrefix: selectedCompany?.issuePrefix ?? null,
+    companySlug: selectedCompany?.slug ?? null,
   };
 
   return (

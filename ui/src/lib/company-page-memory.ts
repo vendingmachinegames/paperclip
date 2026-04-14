@@ -1,6 +1,6 @@
 import {
-  extractCompanyPrefixFromPath,
-  normalizeCompanyPrefix,
+  extractCompanySlugFromPath,
+  normalizeCompanySlug,
   toCompanyRelativePath,
 } from "./company-routes";
 
@@ -15,33 +15,34 @@ export function isRememberableCompanyPath(path: string): boolean {
   return true;
 }
 
-function findCompanyByPrefix<T extends { id: string; issuePrefix: string }>(params: {
+function findCompanyBySlug<T extends { id: string; slug: string }>(params: {
   companies: T[];
-  companyPrefix: string;
+  companySlug: string;
 }): T | null {
-  const normalizedPrefix = normalizeCompanyPrefix(params.companyPrefix);
-  return params.companies.find((company) => normalizeCompanyPrefix(company.issuePrefix) === normalizedPrefix) ?? null;
+  const normalized = normalizeCompanySlug(params.companySlug);
+  return params.companies.find((company) => normalizeCompanySlug(company.slug) === normalized) ?? null;
 }
 
-export function getRememberedPathOwnerCompanyId<T extends { id: string; issuePrefix: string }>(params: {
+export function getRememberedPathOwnerCompanyId<T extends { id: string; slug: string }>(params: {
   companies: T[];
   pathname: string;
   fallbackCompanyId: string | null;
 }): string | null {
-  const routeCompanyPrefix = extractCompanyPrefixFromPath(params.pathname);
-  if (!routeCompanyPrefix) {
+  const routeCompanySlug = extractCompanySlugFromPath(params.pathname);
+  if (!routeCompanySlug) {
     return params.fallbackCompanyId;
   }
 
-  return findCompanyByPrefix({
+  return findCompanyBySlug({
     companies: params.companies,
-    companyPrefix: routeCompanyPrefix,
+    companySlug: routeCompanySlug,
   })?.id ?? null;
 }
 
 export function sanitizeRememberedPathForCompany(params: {
   path: string | null | undefined;
-  companyPrefix: string;
+  /** Ticket-key prefix (e.g. "ACME"); used to drop cross-company ticket paths. */
+  companyIssuePrefix: string;
 }): string {
   const relativePath = params.path ? toCompanyRelativePath(params.path) : "/dashboard";
   if (!isRememberableCompanyPath(relativePath)) {
@@ -55,7 +56,7 @@ export function sanitizeRememberedPathForCompany(params: {
     const identifierMatch = /^([A-Za-z]+)-\d+$/.exec(entityId);
     if (
       identifierMatch &&
-      normalizeCompanyPrefix(identifierMatch[1] ?? "") !== normalizeCompanyPrefix(params.companyPrefix)
+      (identifierMatch[1] ?? "").toUpperCase() !== params.companyIssuePrefix.toUpperCase()
     ) {
       return "/dashboard";
     }

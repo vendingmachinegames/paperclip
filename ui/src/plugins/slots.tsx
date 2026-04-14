@@ -47,7 +47,7 @@ import {
 
 export type PluginSlotContext = {
   companyId?: string | null;
-  companyPrefix?: string | null;
+  companySlug?: string | null;
   projectId?: string | null;
   entityId?: string | null;
   entityType?: PluginUiSlotEntityType | null;
@@ -680,7 +680,7 @@ function slotContextToHostContext(
 ): PluginHostContext {
   return {
     companyId: pluginSlotContext.companyId ?? null,
-    companyPrefix: pluginSlotContext.companyPrefix ?? null,
+    companySlug: pluginSlotContext.companySlug ?? null,
     projectId: pluginSlotContext.projectId ?? (pluginSlotContext.entityType === "project" ? pluginSlotContext.entityId ?? null : null),
     entityId: pluginSlotContext.entityId ?? null,
     entityType: pluginSlotContext.entityType ?? null,

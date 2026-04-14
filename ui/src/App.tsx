@@ -199,9 +199,9 @@ function LegacySettingsRedirect() {
 function OnboardingRoutePage() {
   const { companies } = useCompany();
   const { openOnboarding } = useDialog();
-  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
-  const matchedCompany = companyPrefix
-    ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase()) ?? null
+  const { companySlug } = useParams<{ companySlug?: string }>();
+  const matchedCompany = companySlug
+    ? companies.find((company) => company.slug.toLowerCase() === companySlug.toLowerCase()) ?? null
     : null;
 
   const title = matchedCompany
@@ -257,7 +257,7 @@ function CompanyRootRedirect() {
     return <NoCompaniesStartPage />;
   }
 
-  return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
+  return <Navigate to={`/${targetCompany.slug}/dashboard`} replace />;
 }
 
 function UnprefixedBoardRedirect() {
@@ -283,7 +283,7 @@ function UnprefixedBoardRedirect() {
 
   return (
     <Navigate
-      to={`/${targetCompany.issuePrefix}${location.pathname}${location.search}${location.hash}`}
+      to={`/${targetCompany.slug}${location.pathname}${location.search}${location.hash}`}
       replace
     />
   );
@@ -355,7 +355,7 @@ export function App() {
           <Route path="execution-workspaces/:workspaceId/issues" element={<UnprefixedBoardRedirect />} />
           <Route path="tests/ux/chat" element={<UnprefixedBoardRedirect />} />
           <Route path="tests/ux/runs" element={<UnprefixedBoardRedirect />} />
-          <Route path=":companyPrefix" element={<Layout />}>
+          <Route path=":companySlug" element={<Layout />}>
             {boardRoutes()}
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />

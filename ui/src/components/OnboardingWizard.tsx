@@ -71,18 +71,18 @@ export function OnboardingWizard() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
-  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
+  const { companySlug } = useParams<{ companySlug?: string }>();
   const [routeDismissed, setRouteDismissed] = useState(false);
 
   // Sync disabled adapter types from server so adapter grid filters them out
   const disabledTypes = useDisabledAdaptersSync();
 
   const routeOnboardingOptions =
-    companyPrefix && companiesLoading
+    companySlug && companiesLoading
       ? null
       : resolveRouteOnboardingOptions({
           pathname: location.pathname,
-          companyPrefix,
+          companySlug,
           companies,
         });
   const effectiveOnboardingOpen =
@@ -141,7 +141,7 @@ export function OnboardingWizard() {
   const [createdCompanyId, setCreatedCompanyId] = useState<string | null>(
     existingCompanyId ?? null
   );
-  const [createdCompanyPrefix, setCreatedCompanyPrefix] = useState<
+  const [createdCompanySlug, setCreatedCompanySlug] = useState<
     string | null
   >(null);
   const [createdCompanyGoalId, setCreatedCompanyGoalId] = useState<string | null>(
@@ -163,7 +163,7 @@ export function OnboardingWizard() {
     const cId = effectiveOnboardingOptions.companyId ?? null;
     setStep(effectiveOnboardingOptions.initialStep ?? 1);
     setCreatedCompanyId(cId);
-    setCreatedCompanyPrefix(null);
+    setCreatedCompanySlug(null);
     setCreatedCompanyGoalId(null);
     setCreatedProjectId(null);
     setCreatedAgentId(null);
@@ -176,10 +176,10 @@ export function OnboardingWizard() {
 
   // Backfill issue prefix for an existing company once companies are loaded.
   useEffect(() => {
-    if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanyPrefix) return;
+    if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanySlug) return;
     const company = companies.find((c) => c.id === createdCompanyId);
-    if (company) setCreatedCompanyPrefix(company.issuePrefix);
-  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
+    if (company) setCreatedCompanySlug(company.issuePrefix);
+  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanySlug, companies]);
 
   // Resize textarea when step 3 is shown or description changes
   useEffect(() => {
@@ -298,7 +298,7 @@ export function OnboardingWizard() {
     setTaskTitle("Hire your first engineer and create a hiring plan");
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
-    setCreatedCompanyPrefix(null);
+    setCreatedCompanySlug(null);
     setCreatedCompanyGoalId(null);
     setCreatedAgentId(null);
     setCreatedProjectId(null);
@@ -383,7 +383,7 @@ export function OnboardingWizard() {
     try {
       const company = await companiesApi.create({ name: companyName.trim() });
       setCreatedCompanyId(company.id);
-      setCreatedCompanyPrefix(company.issuePrefix);
+      setCreatedCompanySlug(company.issuePrefix);
       setSelectedCompanyId(company.id);
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
 
@@ -578,8 +578,8 @@ export function OnboardingWizard() {
       reset();
       closeOnboarding();
       navigate(
-        createdCompanyPrefix
-          ? `/${createdCompanyPrefix}/issues/${issueRef}`
+        createdCompanySlug
+          ? `/${createdCompanySlug}/issues/${issueRef}`
           : `/issues/${issueRef}`
       );
     } catch (err) {

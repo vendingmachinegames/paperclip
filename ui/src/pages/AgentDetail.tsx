@@ -613,8 +613,8 @@ function WorkspaceOperationsSection({
 }
 
 export function AgentDetail() {
-  const { companyPrefix, agentId, tab: urlTab, runId: urlRunId } = useParams<{
-    companyPrefix?: string;
+  const { companySlug, agentId, tab: urlTab, runId: urlRunId } = useParams<{
+    companySlug?: string;
     agentId: string;
     tab?: string;
     runId?: string;
@@ -638,10 +638,10 @@ export function AgentDetail() {
   const { isMobile } = useSidebar();
   const routeAgentRef = agentId ?? "";
   const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
+    if (!companySlug) return null;
+    const requestedSlug = companySlug.toLowerCase();
+    return companies.find((company) => company.slug.toLowerCase() === requestedSlug)?.id ?? null;
+  }, [companies, companySlug]);
   const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
   const canFetchAgent = routeAgentRef.length > 0 && (isUuidLike(routeAgentRef) || Boolean(lookupCompanyId));
   const setSaveConfigAction = useCallback((fn: (() => void) | null) => { saveConfigActionRef.current = fn; }, []);

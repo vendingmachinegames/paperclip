@@ -68,7 +68,7 @@ export function Layout() {
     setSelectedCompanyId,
   } = useCompany();
   const { theme, toggleTheme } = useTheme();
-  const { companyPrefix } = useParams<{ companyPrefix: string }>();
+  const { companySlug } = useParams<{ companySlug: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const navigationType = useNavigationType();
@@ -82,12 +82,12 @@ export function Layout() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const nextTheme = theme === "dark" ? "light" : "dark";
   const matchedCompany = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix) ?? null;
-  }, [companies, companyPrefix]);
-  const hasUnknownCompanyPrefix =
-    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
+    if (!companySlug) return null;
+    const requestedSlug = companySlug.toLowerCase();
+    return companies.find((company) => company.slug.toLowerCase() === requestedSlug) ?? null;
+  }, [companies, companySlug]);
+  const hasUnknownCompanySlug =
+    Boolean(companySlug) && !companiesLoading && companies.length > 0 && !matchedCompany;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -113,7 +113,7 @@ export function Layout() {
   }, [companies, companiesLoading, openOnboarding, health?.deploymentMode]);
 
   useEffect(() => {
-    if (!companyPrefix || companiesLoading || companies.length === 0) return;
+    if (!companySlug || companiesLoading || companies.length === 0) return;
 
     if (!matchedCompany) {
       const fallback = (selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null)
@@ -125,9 +125,9 @@ export function Layout() {
       return;
     }
 
-    if (companyPrefix !== matchedCompany.issuePrefix) {
+    if (companySlug.toLowerCase() !== matchedCompany.slug.toLowerCase()) {
       const suffix = location.pathname.replace(/^\/[^/]+/, "");
-      navigate(`/${matchedCompany.issuePrefix}${suffix}${location.search}`, { replace: true });
+      navigate(`/${matchedCompany.slug}${suffix}${location.search}`, { replace: true });
       return;
     }
 
@@ -141,7 +141,7 @@ export function Layout() {
       setSelectedCompanyId(matchedCompany.id, { source: "route_sync" });
     }
   }, [
-    companyPrefix,
+    companySlug,
     companies,
     companiesLoading,
     matchedCompany,
@@ -468,10 +468,10 @@ export function Layout() {
                 isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
               )}
             >
-              {hasUnknownCompanyPrefix ? (
+              {hasUnknownCompanySlug ? (
                 <NotFoundPage
                   scope="invalid_company_prefix"
-                  requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
+                  requestedPrefix={companySlug ?? selectedCompany?.slug}
                 />
               ) : (
                 <Outlet />

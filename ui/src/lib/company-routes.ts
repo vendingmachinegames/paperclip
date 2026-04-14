@@ -20,8 +20,8 @@ const BOARD_ROUTE_ROOTS = new Set([
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs", "instance"]);
 
-export function normalizeCompanyPrefix(prefix: string): string {
-  return prefix.trim().toUpperCase();
+export function normalizeCompanySlug(slug: string): string {
+  return slug.trim().toLowerCase();
 }
 
 function splitPath(path: string): { pathname: string; search: string; hash: string } {
@@ -51,27 +51,27 @@ export function isBoardPathWithoutPrefix(pathname: string): boolean {
   return BOARD_ROUTE_ROOTS.has(root.toLowerCase());
 }
 
-export function extractCompanyPrefixFromPath(pathname: string): string | null {
+export function extractCompanySlugFromPath(pathname: string): string | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return null;
   const first = segments[0]!.toLowerCase();
   if (GLOBAL_ROUTE_ROOTS.has(first) || BOARD_ROUTE_ROOTS.has(first)) {
     return null;
   }
-  return normalizeCompanyPrefix(segments[0]!);
+  return normalizeCompanySlug(segments[0]!);
 }
 
-export function applyCompanyPrefix(path: string, companyPrefix: string | null | undefined): string {
+export function applyCompanySlug(path: string, companySlug: string | null | undefined): string {
   const { pathname, search, hash } = splitPath(path);
   if (!pathname.startsWith("/")) return path;
   if (isGlobalPath(pathname)) return path;
-  if (!companyPrefix) return path;
+  if (!companySlug) return path;
 
-  const prefix = normalizeCompanyPrefix(companyPrefix);
-  const activePrefix = extractCompanyPrefixFromPath(pathname);
-  if (activePrefix) return path;
+  const slug = normalizeCompanySlug(companySlug);
+  const activeSlug = extractCompanySlugFromPath(pathname);
+  if (activeSlug) return path;
 
-  return `/${prefix}${pathname}${search}${hash}`;
+  return `/${slug}${pathname}${search}${hash}`;
 }
 
 export function toCompanyRelativePath(path: string): string {

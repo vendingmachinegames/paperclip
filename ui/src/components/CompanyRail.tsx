@@ -101,7 +101,7 @@ function SortableCompanyItem({
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
           <a
-            href={`/${company.issuePrefix}/dashboard`}
+            href={`/${company.slug}/dashboard`}
             onClick={(e) => {
               e.preventDefault();
               onSelect();
@@ -295,7 +295,7 @@ export function CompanyRail() {
                 onSelect={() => {
                   setSelectedCompanyId(company.id);
                   if (isInstanceRoute) {
-                    navigate(`/${company.issuePrefix}/dashboard`);
+                    navigate(`/${company.slug}/dashboard`);
                   }
                 }}
               />

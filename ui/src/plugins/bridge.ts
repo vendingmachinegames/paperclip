@@ -69,7 +69,7 @@ export type PluginToastFn = (input: PluginToastInput) => string | null;
 
 export interface PluginHostContext {
   companyId: string | null;
-  companyPrefix: string | null;
+  companySlug: string | null;
   projectId: string | null;
   entityId: string | null;
   entityType: string | null;

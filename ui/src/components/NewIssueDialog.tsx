@@ -450,14 +450,14 @@ export function NewIssueDialog() {
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
       if (draftTimer.current) clearTimeout(draftTimer.current);
       if (failures.length > 0) {
-        const prefix = (companies.find((company) => company.id === companyId)?.issuePrefix ?? "").trim();
+        const slug = (companies.find((company) => company.id === companyId)?.slug ?? "").trim();
         const issueRef = issue.identifier ?? issue.id;
         pushToast({
           title: `Created ${issueRef} with upload warnings`,
           body: `${failures.length} staged ${failures.length === 1 ? "file" : "files"} could not be added.`,
           tone: "warn",
-          action: prefix
-            ? { label: `Open ${issueRef}`, href: `/${prefix}/issues/${issueRef}` }
+          action: slug
+            ? { label: `Open ${issueRef}`, href: `/${slug}/issues/${issueRef}` }
             : undefined,
         });
       }

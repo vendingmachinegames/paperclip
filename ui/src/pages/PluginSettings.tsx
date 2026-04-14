@@ -50,7 +50,7 @@ import {
  * - `POST /api/plugins/:pluginId/config/test` — test configuration.
  *
  * URL params:
- * - `companyPrefix` — the company slug (for breadcrumb links).
+ * - `companySlug` — the company slug (for breadcrumb links).
  * - `pluginId` — UUID of the plugin to display.
  *
  * @see PluginManager — parent list page.
@@ -60,7 +60,7 @@ import {
 export function PluginSettings() {
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { companyPrefix, pluginId } = useParams<{ companyPrefix?: string; pluginId: string }>();
+  const { companySlug, pluginId } = useParams<{ companySlug?: string; pluginId: string }>();
   const [activeTab, setActiveTab] = useState<"configuration" | "status">("configuration");
 
   const { data: plugin, isLoading: pluginLoading } = useQuery({
@@ -119,7 +119,7 @@ export function PluginSettings() {
       { label: "Plugins", href: "/instance/settings/plugins" },
       { label: plugin?.manifestJson?.displayName ?? plugin?.packageName ?? "Plugin Details" },
     ]);
-  }, [selectedCompany?.name, setBreadcrumbs, companyPrefix, plugin]);
+  }, [selectedCompany?.name, setBreadcrumbs, companySlug, plugin]);
 
   useEffect(() => {
     setActiveTab("configuration");
@@ -220,7 +220,7 @@ export function PluginSettings() {
                       slot={slot}
                       context={{
                         companyId: selectedCompanyId,
-                        companyPrefix: companyPrefix ?? null,
+                        companySlug: companySlug ?? null,
                       }}
                       missingBehavior="placeholder"
                     />

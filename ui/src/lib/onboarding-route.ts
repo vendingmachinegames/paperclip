@@ -1,6 +1,6 @@
 type OnboardingRouteCompany = {
   id: string;
-  issuePrefix: string;
+  slug: string;
 };
 
 export function isOnboardingPath(pathname: string): boolean {
@@ -19,22 +19,20 @@ export function isOnboardingPath(pathname: string): boolean {
 
 export function resolveRouteOnboardingOptions(params: {
   pathname: string;
-  companyPrefix?: string;
+  companySlug?: string;
   companies: OnboardingRouteCompany[];
 }): { initialStep: 1 | 2; companyId?: string } | null {
-  const { pathname, companyPrefix, companies } = params;
+  const { pathname, companySlug, companies } = params;
 
   if (!isOnboardingPath(pathname)) return null;
 
-  if (!companyPrefix) {
+  if (!companySlug) {
     return { initialStep: 1 };
   }
 
+  const normalized = companySlug.toLowerCase();
   const matchedCompany =
-    companies.find(
-      (company) =>
-        company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase(),
-    ) ?? null;
+    companies.find((company) => company.slug.toLowerCase() === normalized) ?? null;
 
   if (!matchedCompany) {
     return { initialStep: 1 };

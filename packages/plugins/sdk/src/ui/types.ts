@@ -84,7 +84,7 @@ export interface PluginHostContext {
   /** UUID of the currently active company, if any. */
   companyId: string | null;
   /** URL prefix for the current company (e.g. `"my-company"`). */
-  companyPrefix: string | null;
+  companySlug: string | null;
   /** UUID of the currently active project, if any. */
   projectId: string | null;
   /** UUID of the current entity (for detail tab contexts), if any. */
