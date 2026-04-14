@@ -253,7 +253,7 @@ function CompanyRootRedirect() {
     return <FirstVisitBootstrap />;
   }
 
-  return <Navigate to={`/${targetCompany.slug}/dashboard`} replace />;
+  return <Navigate to={`/${targetCompany.slug}/boardroom`} replace />;
 }
 
 function FirstVisitBootstrap() {
