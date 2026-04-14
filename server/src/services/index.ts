@@ -1,5 +1,6 @@
 export { companyService } from "./companies.js";
 export { boardroomService, type BoardroomService } from "./boardroom.js";
+export { seedOnboardingCeo } from "./onboarding-ceo.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";
 export { agentService, deduplicateAgentName } from "./agents.js";

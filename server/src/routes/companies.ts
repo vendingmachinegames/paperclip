@@ -24,6 +24,7 @@ import {
   companyService,
   feedbackService,
   logActivity,
+  seedOnboardingCeo,
 } from "../services/index.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
@@ -335,7 +336,8 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       draft: true,
     });
     await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
-    await boardroom.getOrCreate(company.id);
+    const room = await boardroom.getOrCreate(company.id);
+    await seedOnboardingCeo({ db, companyId: company.id, boardroomIssueId: room.id });
     await logActivity(db, {
       companyId: company.id,
       actorType: "user",
