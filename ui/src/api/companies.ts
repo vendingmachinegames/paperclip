@@ -14,6 +14,22 @@ import { api } from "./client";
 
 export type CompanyStats = Record<string, { agentCount: number; issueCount: number }>;
 
+export interface BoardroomCard {
+  id: string;
+  companyId: string;
+  issueId: string;
+  commentId: string;
+  createdByAgentId: string | null;
+  kind: string;
+  state: "pending" | "accepted" | "rejected";
+  payload: Record<string, unknown>;
+  resultPayload: Record<string, unknown> | null;
+  resolvedByUserId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export const companiesApi = {
   list: () => api.get<Company[]>("/companies"),
   get: (companyId: string) => api.get<Company>(`/companies/${companyId}`),
@@ -32,6 +48,18 @@ export const companiesApi = {
     ),
   getBoardroom: (companyId: string) =>
     api.get<{ boardroom: Issue }>(`/companies/${companyId}/boardroom`),
+  listBoardroomCards: (companyId: string) =>
+    api.get<{ cards: BoardroomCard[] }>(`/companies/${companyId}/boardroom/cards`),
+  acceptBoardroomCard: (companyId: string, cardId: string) =>
+    api.post<{ card: BoardroomCard }>(
+      `/companies/${companyId}/boardroom/cards/${cardId}/accept`,
+      {},
+    ),
+  rejectBoardroomCard: (companyId: string, cardId: string) =>
+    api.post<{ card: BoardroomCard }>(
+      `/companies/${companyId}/boardroom/cards/${cardId}/reject`,
+      {},
+    ),
   update: (
     companyId: string,
     data: Partial<

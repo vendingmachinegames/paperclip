@@ -6,6 +6,8 @@ export const queryKeys = {
     boardroom: (companyId: string) => ["companies", companyId, "boardroom"] as const,
     boardroomComments: (companyId: string) =>
       ["companies", companyId, "boardroom", "comments"] as const,
+    boardroomCards: (companyId: string) =>
+      ["companies", companyId, "boardroom", "cards"] as const,
   },
   companySkills: {
     list: (companyId: string) => ["company-skills", companyId] as const,

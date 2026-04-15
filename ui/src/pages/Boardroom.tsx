@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@/lib/router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import type { Agent, IssueComment } from "@paperclipai/shared";
-import { companiesApi } from "@/api/companies";
+import { stripBoardroomCardBlocks } from "@paperclipai/shared";
+import { companiesApi, type BoardroomCard } from "@/api/companies";
 import { issuesApi } from "@/api/issues";
 import { agentsApi } from "@/api/agents";
 import { useCompany } from "@/context/CompanyContext";
@@ -11,9 +12,12 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Identity } from "@/components/Identity";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MentionOption } from "@/components/MarkdownEditor";
+import { BoardroomCardView } from "@/components/BoardroomCards";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/timeAgo";
 import { cn } from "@/lib/utils";
+
+const EMPTY_CARDS: BoardroomCard[] = [];
 
 /**
  * Minimal Boardroom view — renders the company-wide group conversation.
@@ -70,6 +74,25 @@ export function Boardroom() {
     return map;
   }, [agentsQuery.data]);
 
+  const cardsQuery = useQuery({
+    queryKey: company
+      ? queryKeys.companies.boardroomCards(company.id)
+      : ["boardroom-cards", "__idle__"],
+    queryFn: () => companiesApi.listBoardroomCards(company!.id),
+    enabled: Boolean(company),
+    refetchInterval: 5_000,
+  });
+
+  const cardsByCommentId = useMemo(() => {
+    const map = new Map<string, BoardroomCard[]>();
+    for (const card of cardsQuery.data?.cards ?? []) {
+      const list = map.get(card.commentId) ?? [];
+      list.push(card);
+      map.set(card.commentId, list);
+    }
+    return map;
+  }, [cardsQuery.data]);
+
   const runningAgents = useMemo(
     () => (agentsQuery.data ?? []).filter((a) => a.status === "running"),
     [agentsQuery.data],
@@ -102,6 +125,9 @@ export function Boardroom() {
       if (company) {
         queryClient.invalidateQueries({
           queryKey: queryKeys.companies.boardroomComments(company.id),
+        });
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.companies.boardroomCards(company.id),
         });
       }
     },
@@ -159,6 +185,8 @@ export function Boardroom() {
                 key={comment.id}
                 comment={comment}
                 agent={comment.authorAgentId ? agentById.get(comment.authorAgentId) ?? null : null}
+                cards={cardsByCommentId.get(comment.id) ?? EMPTY_CARDS}
+                companyId={company.id}
               />
             ))}
             {runningAgents.map((agent) => (
@@ -235,12 +263,18 @@ function TypingDot({ delay }: { delay: string }) {
 const BoardroomMessage = memo(function BoardroomMessage({
   comment,
   agent,
+  cards,
+  companyId,
 }: {
   comment: IssueComment;
   agent: Agent | null;
+  cards: BoardroomCard[];
+  companyId: string;
 }) {
   const authorName = agent?.name ?? (comment.authorUserId ? "You" : "System");
   const isAgent = Boolean(comment.authorAgentId);
+  const strippedBody = useMemo(() => stripBoardroomCardBlocks(comment.body), [comment.body]);
+  const hasText = strippedBody.length > 0;
 
   return (
     <li className={cn("flex flex-col gap-1")}>
@@ -254,9 +288,14 @@ const BoardroomMessage = memo(function BoardroomMessage({
           </span>
         )}
       </div>
-      <div className="rounded-md border border-border bg-card px-3 py-2 text-sm">
-        <MarkdownBody>{comment.body}</MarkdownBody>
-      </div>
+      {hasText && (
+        <div className="rounded-md border border-border bg-card px-3 py-2 text-sm">
+          <MarkdownBody>{strippedBody}</MarkdownBody>
+        </div>
+      )}
+      {cards.map((card) => (
+        <BoardroomCardView key={card.id} card={card} companyId={companyId} />
+      ))}
     </li>
   );
 });
