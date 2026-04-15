@@ -34,6 +34,21 @@ vi.mock("../services/index.js", () => ({
     findForCompany: vi.fn(),
     create: vi.fn(),
   }),
+  boardroomCardsService: () => ({
+    create: vi.fn(),
+    getById: vi.fn(),
+    listForIssue: vi.fn(),
+    listForComments: vi.fn(),
+    resolve: vi.fn(),
+  }),
+  issueService: () => ({
+    list: vi.fn(),
+    get: vi.fn(),
+    update: vi.fn(),
+    addComment: vi.fn(),
+    listComments: vi.fn(),
+  }),
+  seedOnboardingCeo: vi.fn(),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(),
     listFeedbackTraces: vi.fn(),

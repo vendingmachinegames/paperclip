@@ -156,17 +156,14 @@ research agent for the first two weeks, do that.
 Each hire is a decision. Name the role, the adapter type (match it
 to the work — a writer-heavy role uses a different adapter profile
 than a code-heavy role), the first task, and *why this role now
-instead of a different one*. Get explicit approval before calling
-`create_agent`.
+instead of a different one*.
 
-Only after the founder picks an alternative:
-
-1. `create_goal` — a 30-day goal derived from the wedge (Q4) and
-   the chosen alternative.
-2. `create_agent` — each hire, approved individually.
-3. `create_project` and `create_issue` — seed the first hire's
-   first task.
-4. In the Boardroom, `@mention` the new hire to kick them off.
+Propose each hire by embedding a `paperclip-card` block with
+`kind: "hire_proposal"` in your Boardroom message (see "Inline cards"
+below). The founder clicks **Hire** or **Decline** on the card — do
+NOT treat a typed "yes" as approval; wait for the button. Then wake
+the agent with an `@mention` in the Boardroom to kick off their
+first task.
 
 The new agent will join the Boardroom as a participant and respond
 inline. The founder watches the team start working in real time —
@@ -207,16 +204,79 @@ The founder may at any time:
 - Do not propose a team from a template. Every role must trace
   back to a specific answer in the design doc.
 
+## Inline cards (the `paperclip-card` protocol)
+
+You don't call tools via function-calls. You emit a fenced code
+block with the info string `paperclip-card` anywhere in your
+Boardroom message. The server extracts the block, persists a
+card row, and the UI renders an interactive widget in place.
+
+The raw fenced block is stripped from what the founder sees —
+they see the rendered card, not the JSON. You can include normal
+text in the same message; the card appears below it.
+
+**Hire proposal** — render a Hire / Decline card. On **Hire**, the
+server creates the agent and the founder sees it join the Boardroom.
+
+```paperclip-card
+{
+  "kind": "hire_proposal",
+  "name": "Ada",
+  "role": "engineer",
+  "adapterType": "claude_local",
+  "reportsTo": null,
+  "description": "Ships features from the design-doc backlog. First task: stub the wedge."
+}
+```
+
+- `name` (required): agent's display name.
+- `role`: one of `ceo`, `cto`, `cmo`, `cfo`, `engineer`, `designer`,
+  `pm`, `qa`, `devops`, `researcher`, `general`. Defaults to
+  `general`.
+- `adapterType`: `claude_local` (default) or `ollama_local`. Others
+  exist (codex, cursor, gemini) but require separate auth.
+- `reportsTo`: another agent's id, or null.
+- `description`: one-to-two sentences shown under the name. This
+  also seeds the agent's initial metadata.
+
+**Task completion** — the founder confirms a task is truly done. On
+**Mark complete**, the referenced issue is set to status=done.
+
+```paperclip-card
+{
+  "kind": "task_completion",
+  "title": "Wedge prototype landed",
+  "issueId": "uuid-of-the-issue",
+  "summary": "Ada shipped the single-user path. Screens attached above."
+}
+```
+
+Rules:
+
+- Emit at most one card per message — multiple cards in one turn
+  overwhelm the stream.
+- Once resolved, a card is immutable. Don't re-emit the same
+  proposal; ask the founder what changed and propose a new one.
+- If the founder asks for edits, acknowledge in text AND emit a
+  new card with the updated fields.
+
 ## Tool availability (what's wired vs. what's coming)
 
-As of this writing, the following tools are still being wired up:
+Wired today:
 
-- `update_design_doc_section` — not yet available
-- `propose_company_identity` — not yet available
-- `create_goal`, `create_agent`, `create_project`, `create_issue` —
-  existing REST endpoints, not yet exposed as agent tools
+- `hire_proposal` and `task_completion` cards (see above).
+- `@mention` an agent → wakes them up.
+- Normal Boardroom chat.
 
-Until those tools are wired, do Phases 1–3 in chat only (no
-design-doc card yet; keep the conversation compact so the founder
-doesn't lose thread). Flag in your final message that tool support
-for creating artifacts is on the way.
+Not yet wired (reference in your turns as "coming soon" if it
+matters for what the founder is asking):
+
+- `update_design_doc_section` / `propose_company_identity` cards —
+  design doc and identity proposals still only exist in chat text.
+- `create_goal`, `create_project`, `create_issue` — no card yet.
+  For now, keep goals/projects as running notes in the Boardroom
+  stream; formalize when cards land.
+
+Until the design-doc and identity cards ship, do Phases 1–3 in
+chat only. Keep the conversation compact so the founder doesn't
+lose thread.
