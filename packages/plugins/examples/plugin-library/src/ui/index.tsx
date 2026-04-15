@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
+import type { PluginPageProps, PluginWidgetProps } from "@paperclipai/plugin-sdk/ui";
 
 type LibraryItemKind = "work_product" | "document" | "attachment";
 
@@ -356,3 +356,77 @@ const tdStyle: React.CSSProperties = {
   padding: "10px 12px",
   verticalAlign: "top",
 };
+
+/**
+ * Sidebar entry for the Library. Mounted inside the host's company sidebar
+ * via the `sidebar` plugin slot. Uses the same Tailwind classes as
+ * SidebarNavItem so it looks identical to the built-in links.
+ */
+export function LibrarySidebarLink({ context }: PluginWidgetProps) {
+  const { companySlug } = context;
+  const href = companySlug ? `/${companySlug}/library` : "/library";
+
+  const [isActive, setIsActive] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.location.pathname === href;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const update = () => setIsActive(window.location.pathname === href);
+    window.addEventListener("popstate", update);
+    window.addEventListener("pushstate", update as EventListener);
+    return () => {
+      window.removeEventListener("popstate", update);
+      window.removeEventListener("pushstate", update as EventListener);
+    };
+  }, [href]);
+
+  function handleClick(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+    event.preventDefault();
+    window.history.pushState(null, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    setIsActive(true);
+  }
+
+  const base =
+    "flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors";
+  const activeClasses = "bg-accent text-foreground";
+  const inactiveClasses = "text-foreground/80 hover:bg-accent/50 hover:text-foreground";
+
+  return (
+    <a
+      href={href}
+      onClick={handleClick}
+      className={`${base} ${isActive ? activeClasses : inactiveClasses}`}
+    >
+      <span className="relative shrink-0">
+        <LibraryIcon />
+      </span>
+      <span className="flex-1 truncate">Library</span>
+    </a>
+  );
+}
+
+function LibraryIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 3v18" />
+      <path d="M10 3v18" />
+      <path d="m14.5 3.5 5 17" />
+      <path d="M4 21h18" />
+    </svg>
+  );
+}
