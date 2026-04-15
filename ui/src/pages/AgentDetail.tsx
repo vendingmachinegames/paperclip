@@ -1012,7 +1012,7 @@ export function AgentDetail() {
               { value: "dashboard", label: "Dashboard" },
               { value: "instructions", label: "Instructions" },
               { value: "skills", label: "Skills" },
-              ...(agent.adapterType === "claude_local"
+              ...(adapterSupportsMcp(agent.adapterType)
                 ? [{ value: "mcp", label: "MCP Servers" }]
                 : []),
               { value: "configuration", label: "Configuration" },
@@ -1131,7 +1131,7 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "mcp" && agent.adapterType === "claude_local" && (
+      {activeView === "mcp" && adapterSupportsMcp(agent.adapterType) && (
         <McpServersTab
           agent={agent}
           companyId={resolvedCompanyId ?? undefined}
@@ -2430,7 +2430,13 @@ function PromptEditorSkeleton() {
   );
 }
 
-/* ---- MCP Servers Tab (claude_local only) ---- */
+/* ---- MCP Servers Tab (claude_local + ollama_local) ---- */
+
+const ADAPTERS_WITH_MCP: ReadonlyArray<string> = ["claude_local", "ollama_local"];
+
+function adapterSupportsMcp(adapterType: string | null | undefined): boolean {
+  return typeof adapterType === "string" && ADAPTERS_WITH_MCP.includes(adapterType);
+}
 
 function McpServersTab({
   agent,
