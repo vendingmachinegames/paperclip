@@ -1,5 +1,12 @@
 export { companyService } from "./companies.js";
 export { boardroomService, type BoardroomService } from "./boardroom.js";
+export {
+  boardroomCardsService,
+  type BoardroomCardsService,
+  type BoardroomCardRow,
+  type BoardroomCardKind,
+  type BoardroomCardState,
+} from "./boardroom-cards.js";
 export { seedOnboardingCeo } from "./onboarding-ceo.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";

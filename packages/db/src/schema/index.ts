@@ -33,6 +33,7 @@ export { labels } from "./labels.js";
 export { issueLabels } from "./issue_labels.js";
 export { issueApprovals } from "./issue_approvals.js";
 export { issueComments } from "./issue_comments.js";
+export { boardroomCards } from "./boardroom_cards.js";
 export { issueExecutionDecisions } from "./issue_execution_decisions.js";
 export { issueInboxArchives } from "./issue_inbox_archives.js";
 export { inboxDismissals } from "./inbox_dismissals.js";
