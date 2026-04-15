@@ -58,6 +58,7 @@ function registerServiceMocks() {
       addComment: vi.fn(),
       listComments: vi.fn(),
     }),
+    libraryService: () => ({ listForCompany: vi.fn() }),
     seedOnboardingCeo: vi.fn(),
     budgetService: () => mockBudgetService,
     companyPortabilityService: () => mockCompanyPortabilityService,

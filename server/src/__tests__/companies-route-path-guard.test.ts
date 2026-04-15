@@ -48,6 +48,7 @@ vi.mock("../services/index.js", () => ({
     addComment: vi.fn(),
     listComments: vi.fn(),
   }),
+  libraryService: () => ({ listForCompany: vi.fn() }),
   seedOnboardingCeo: vi.fn(),
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(),

@@ -25,6 +25,7 @@ import {
   companyService,
   feedbackService,
   issueService,
+  libraryService,
   logActivity,
   seedOnboardingCeo,
 } from "../services/index.js";
@@ -316,6 +317,18 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   });
 
   const cardsSvc = boardroomCardsService(db);
+  const library = libraryService(db);
+
+  router.get("/:companyId/library", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const limitRaw = req.query.limit;
+    const limit = typeof limitRaw === "string" ? Number.parseInt(limitRaw, 10) : undefined;
+    const items = await library.listForCompany(companyId, {
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    res.json({ items });
+  });
 
   router.get("/:companyId/boardroom/cards", async (req, res) => {
     const companyId = req.params.companyId as string;
