@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@/lib/router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import type { Agent, IssueComment } from "@paperclipai/shared";
@@ -10,8 +10,8 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { Identity } from "@/components/Identity";
 import { MarkdownBody } from "@/components/MarkdownBody";
+import { MarkdownEditor, type MentionOption } from "@/components/MarkdownEditor";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { timeAgo } from "@/lib/timeAgo";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +74,19 @@ export function Boardroom() {
     () => (agentsQuery.data ?? []).filter((a) => a.status === "running"),
     [agentsQuery.data],
   );
+
+  const mentionOptions = useMemo<MentionOption[]>(() => {
+    return [...(agentsQuery.data ?? [])]
+      .filter((a) => a.status !== "terminated")
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((a) => ({
+        id: `agent:${a.id}`,
+        name: a.name,
+        kind: "agent" as const,
+        agentId: a.id,
+        agentIcon: a.icon,
+      }));
+  }, [agentsQuery.data]);
 
   const [draft, setDraft] = useState("");
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -156,37 +169,33 @@ export function Boardroom() {
       </div>
 
       <div className="border-t border-border px-4 py-3 md:px-6">
-        <form
-          className="mx-auto flex max-w-3xl items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const trimmed = draft.trim();
-            if (!trimmed) return;
-            addComment.mutate(trimmed);
-          }}
-        >
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Post to the Boardroom… @mention an agent to ping them."
-            rows={2}
-            className="min-h-[52px] resize-none"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
+        <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <div className="flex-1 min-w-0">
+            <MarkdownEditor
+              value={draft}
+              onChange={setDraft}
+              placeholder="Post to the Boardroom… type @ to mention an agent."
+              mentions={mentionOptions}
+              onSubmit={() => {
                 const trimmed = draft.trim();
-                if (trimmed) addComment.mutate(trimmed);
-              }
-            }}
-          />
+                if (trimmed && !addComment.isPending) addComment.mutate(trimmed);
+              }}
+              bordered
+              contentClassName="min-h-[52px] max-h-[28dvh] overflow-y-auto pr-1 text-sm scrollbar-auto-hide"
+            />
+          </div>
           <Button
-            type="submit"
+            type="button"
+            onClick={() => {
+              const trimmed = draft.trim();
+              if (trimmed) addComment.mutate(trimmed);
+            }}
             disabled={!draft.trim() || addComment.isPending}
             className="shrink-0"
           >
             {addComment.isPending ? "Posting…" : "Post"}
           </Button>
-        </form>
+        </div>
         {addComment.error && (
           <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">
             {addComment.error instanceof Error ? addComment.error.message : "Failed to post"}
@@ -197,7 +206,7 @@ export function Boardroom() {
   );
 }
 
-function TypingIndicator({ agent }: { agent: Agent }) {
+const TypingIndicator = memo(function TypingIndicator({ agent }: { agent: Agent }) {
   return (
     <li className="flex flex-col gap-1">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -212,7 +221,7 @@ function TypingIndicator({ agent }: { agent: Agent }) {
       </div>
     </li>
   );
-}
+});
 
 function TypingDot({ delay }: { delay: string }) {
   return (
@@ -223,7 +232,7 @@ function TypingDot({ delay }: { delay: string }) {
   );
 }
 
-function BoardroomMessage({
+const BoardroomMessage = memo(function BoardroomMessage({
   comment,
   agent,
 }: {
@@ -250,4 +259,4 @@ function BoardroomMessage({
       </div>
     </li>
   );
-}
+});
