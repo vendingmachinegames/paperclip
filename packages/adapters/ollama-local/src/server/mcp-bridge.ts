@@ -55,6 +55,22 @@ function isStdioSpec(spec: McpServerSpec): spec is McpServerStdio {
   return typeof (spec as McpServerStdio).command === "string";
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /**
  * Qualify tool names to avoid collisions across servers. Ollama needs a
  * flat tool namespace; MCP servers each have their own.
@@ -106,6 +122,8 @@ export async function connectMcpServers(
   const clients: Array<{ name: string; client: Client }> = [];
   const tools: McpToolSpec[] = [];
 
+  const CONNECT_TIMEOUT_MS = 15_000;
+
   for (const [serverName, spec] of Object.entries(servers)) {
     try {
       const transport = await createTransport(spec);
@@ -113,10 +131,18 @@ export async function connectMcpServers(
         { name: clientIdentity.name, version: clientIdentity.version },
         { capabilities: {} },
       );
-      await client.connect(transport);
+      await withTimeout(
+        client.connect(transport),
+        CONNECT_TIMEOUT_MS,
+        `MCP server "${serverName}" connect`,
+      );
       clients.push({ name: serverName, client });
 
-      const listed = await client.listTools();
+      const listed = await withTimeout(
+        client.listTools(),
+        CONNECT_TIMEOUT_MS,
+        `MCP server "${serverName}" listTools`,
+      );
       for (const tool of listed.tools) {
         tools.push({
           server: serverName,
@@ -126,6 +152,7 @@ export async function connectMcpServers(
           parameters: (tool.inputSchema ?? {}) as Record<string, unknown>,
         });
       }
+      console.log(`[mcp-bridge] connected to "${serverName}" (${listed.tools.length} tools)`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn(`[mcp-bridge] failed to connect to MCP server "${serverName}": ${message}`);

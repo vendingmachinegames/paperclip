@@ -185,7 +185,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const baseUrl = asString(config.baseUrl, DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, "");
   const rawModel = asString(config.model, DEFAULT_OLLAMA_MODEL).trim();
-  const timeoutSec = asNumber(config.timeoutSec, 300);
+  // Local models can be 30-120s per tool-calling turn on a 32B — the
+  // prior 300s default blew up after two iterations. Bump the adapter
+  // default to 30min for local-LLM realities; users can override via
+  // adapterConfig.timeoutSec.
+  const timeoutSec = asNumber(config.timeoutSec, 1800);
   const temperature =
     typeof config.temperature === "number" && Number.isFinite(config.temperature)
       ? config.temperature

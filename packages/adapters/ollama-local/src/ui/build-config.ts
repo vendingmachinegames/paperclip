@@ -20,7 +20,7 @@ export function buildOllamaLocalConfig(v: CreateConfigValues): Record<string, un
   const temperature = typeof ext.temperature === "number" ? ext.temperature : NaN;
   if (!Number.isNaN(temperature) && Number.isFinite(temperature)) ac.temperature = temperature;
 
-  ac.timeoutSec = 300;
+  ac.timeoutSec = 1800;
   ac.graceSec = 15;
 
   return ac;
