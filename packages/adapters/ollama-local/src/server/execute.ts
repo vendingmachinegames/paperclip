@@ -116,6 +116,35 @@ async function resolveModelName(baseUrl: string, requested: string): Promise<str
   return requested;
 }
 
+/**
+ * Pull the Boardroom (or any conversation-kind issue's) recent comment
+ * thread out of the adapter context. The heartbeat injects this just
+ * before invoking the adapter — see services/heartbeat.ts. Returns null
+ * when the context doesn't carry any (e.g. task-issue wakes), which
+ * makes the adapter fall back to its normal sessionParams rehydration.
+ */
+function readBoardroomMessages(
+  context: Record<string, unknown>,
+  selfAgentId: string,
+): OllamaMessage[] | null {
+  const raw = context.boardroomMessages;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: OllamaMessage[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const body = typeof record.body === "string" ? record.body.trim() : "";
+    if (!body) continue;
+    const authorAgentId = typeof record.authorAgentId === "string" ? record.authorAgentId : null;
+    const isSelf = authorAgentId !== null && authorAgentId === selfAgentId;
+    out.push({
+      role: isSelf ? "assistant" : "user",
+      content: body,
+    });
+  }
+  return out.length > 0 ? out : null;
+}
+
 function extractMcpServers(config: Record<string, unknown>): McpServersConfig | null {
   const raw = config.mcpServers;
   if (!raw || typeof raw !== "object") return null;
@@ -208,22 +237,36 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const contextNote = buildContextNote(context);
   const userContent = contextNote.length > 0 ? `${contextNote}\n\n${renderedPrompt}` : renderedPrompt;
 
-  // Rehydrate prior conversation history from session
+  // Boardroom messages take priority — they're a fresh, authoritative
+  // snapshot of the actual chat thread that woke the agent. We DON'T
+  // also stack the agent's per-task session history on top because the
+  // boardroom rows already include this agent's own past replies.
+  const boardroomMessages = readBoardroomMessages(context, agent.id);
   const sessionParams = parseObject(runtime.sessionParams);
-  const priorMessages: OllamaMessage[] = (() => {
-    if (!Array.isArray(sessionParams.messages)) return [];
-    return (sessionParams.messages as unknown[]).filter((m): m is OllamaMessage => {
-      if (typeof m !== "object" || m === null || Array.isArray(m)) return false;
-      const record = m as Record<string, unknown>;
-      return typeof record.role === "string" && typeof record.content === "string";
-    });
-  })();
+  const priorMessages: OllamaMessage[] =
+    boardroomMessages
+    ?? (() => {
+      if (!Array.isArray(sessionParams.messages)) return [];
+      return (sessionParams.messages as unknown[]).filter((m): m is OllamaMessage => {
+        if (typeof m !== "object" || m === null || Array.isArray(m)) return false;
+        const record = m as Record<string, unknown>;
+        return typeof record.role === "string" && typeof record.content === "string";
+      });
+    })();
 
-  const messages: OllamaMessage[] = [
-    { role: "system", content: systemPrompt },
-    ...priorMessages,
-    { role: "user", content: userContent },
-  ];
+  // For boardroom mode, the latest comment is already the user turn; for
+  // non-boardroom (task issues, scheduled wakes), append the rendered
+  // prompt as a fresh user message.
+  const messages: OllamaMessage[] = boardroomMessages
+    ? [
+        { role: "system", content: systemPrompt + "\n\nYou are participating in a group chat (the Boardroom). Read the conversation above and respond to the most recent message. Address the user (or other agent) directly; don't recap." },
+        ...priorMessages,
+      ]
+    : [
+        { role: "system", content: systemPrompt },
+        ...priorMessages,
+        { role: "user", content: userContent },
+      ];
 
   // Emit Paperclip-standard env vars for logging/meta (no subprocess, but agent needs context)
   const paperclipEnv = buildPaperclipEnv(agent);

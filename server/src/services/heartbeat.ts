@@ -1256,6 +1256,7 @@ export function heartbeatService(db: Db) {
         title: issues.title,
         status: issues.status,
         priority: issues.priority,
+        kind: issues.kind,
         projectId: issues.projectId,
         projectWorkspaceId: issues.projectWorkspaceId,
         executionWorkspaceId: issues.executionWorkspaceId,
@@ -3296,6 +3297,44 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
       }
+
+      // Boardroom (and any other conversation-kind) issues: fetch the
+      // recent comment thread and attach to context.boardroomMessages.
+      // Adapters with native paperclip API tools (claude_local) ignore
+      // this and read live via tool calls; adapters without (ollama_local)
+      // use it to compose the prompt so the model knows what was said.
+      try {
+        const issueIdForCtx = readNonEmptyString(context.issueId);
+        if (issueIdForCtx && issueContext?.kind === "conversation") {
+          const recent = await db
+            .select({
+              id: issueComments.id,
+              authorAgentId: issueComments.authorAgentId,
+              authorUserId: issueComments.authorUserId,
+              body: issueComments.body,
+              createdAt: issueComments.createdAt,
+            })
+            .from(issueComments)
+            .where(eq(issueComments.issueId, issueIdForCtx))
+            .orderBy(desc(issueComments.createdAt))
+            .limit(20);
+          context.boardroomMessages = recent
+            .reverse()
+            .map((row) => ({
+              role: row.authorAgentId === agent.id ? "assistant" : "user",
+              authorAgentId: row.authorAgentId,
+              authorUserId: row.authorUserId,
+              body: row.body,
+              createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+            }));
+        }
+      } catch (err) {
+        await onLog(
+          "stderr",
+          `[paperclip] Failed to fetch boardroom messages: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+
       const adapterResult = await adapter.execute({
         runId: run.id,
         agent,
