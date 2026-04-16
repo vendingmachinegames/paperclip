@@ -16,6 +16,9 @@ export type McpServerStdio = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Working directory for the spawned process. Required by some MCP servers
+   * that walk up from cwd looking for a project-scoped store (e.g. hippo). */
+  cwd?: string;
 };
 
 export type McpServerHttp = {
@@ -92,6 +95,7 @@ async function createTransport(spec: McpServerSpec) {
       command: spec.command,
       args: spec.args ?? [],
       env: spec.env ? { ...process.env as Record<string, string>, ...spec.env } : undefined,
+      cwd: spec.cwd,
     });
   }
   const url = new URL(spec.url);
