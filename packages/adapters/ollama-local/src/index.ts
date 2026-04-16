@@ -4,6 +4,9 @@ export const label = "Ollama (local)";
 export const DEFAULT_OLLAMA_MODEL = "llama3.2";
 export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 
+/** Supported API wire formats. "ollama" = /api/chat, "openai" = /v1/chat/completions. */
+export type ApiFormat = "ollama" | "openai";
+
 export const models = [
   { id: DEFAULT_OLLAMA_MODEL, label: "Llama 3.2" },
   { id: "llama3.1", label: "Llama 3.1" },

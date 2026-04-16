@@ -6,7 +6,7 @@ import {
   parseObject,
   renderTemplate,
 } from "@paperclipai/adapter-utils/server-utils";
-import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL } from "../index.js";
+import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, type ApiFormat } from "../index.js";
 import { connectMcpServers, type McpBridge, type McpServersConfig, type McpToolSpec } from "./mcp-bridge.js";
 
 const MCP_TOOL_ITERATION_LIMIT = 20;
@@ -145,6 +145,112 @@ function readBoardroomMessages(
   return out.length > 0 ? out : null;
 }
 
+// ── OpenAI-compatible API helpers ──
+// These let the same adapter call Ollama (/api/chat) or any OpenAI-
+// compatible endpoint (/v1/chat/completions) — MiniMax, Together,
+// Groq, OpenRouter, etc. — with one config toggle.
+
+function chatEndpoint(baseUrl: string, format: ApiFormat): string {
+  return format === "openai"
+    ? `${baseUrl}/v1/chat/completions`
+    : `${baseUrl}/api/chat`;
+}
+
+function chatHeaders(format: ApiFormat, apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (format === "openai" && apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
+function buildChatBody(params: {
+  model: string;
+  messages: OllamaMessage[];
+  stream: boolean;
+  format: ApiFormat;
+  temperature?: number;
+  maxTokens?: number;
+  tools?: Array<Record<string, unknown>>;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: params.model,
+    messages: params.messages,
+    stream: params.stream,
+  };
+  if (params.temperature !== undefined) {
+    if (params.format === "openai") body.temperature = params.temperature;
+    else body.options = { temperature: params.temperature };
+  }
+  if (params.format === "openai" && params.maxTokens) {
+    body.max_tokens = params.maxTokens;
+  }
+  if (params.tools && params.tools.length > 0) {
+    body.tools = params.tools;
+  }
+  return body;
+}
+
+interface ParsedChatResponse {
+  assistantText: string;
+  toolCalls: OllamaToolCall[];
+  promptEvalCount: number;
+  evalCount: number;
+}
+
+function parseNonStreamResponse(parsed: Record<string, unknown>, format: ApiFormat): ParsedChatResponse {
+  if (format === "openai") {
+    const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+    const first = (choices[0] ?? {}) as Record<string, unknown>;
+    const msg = (first.message ?? {}) as Record<string, unknown>;
+    const usage = (parsed.usage ?? {}) as Record<string, unknown>;
+    const toolCalls: OllamaToolCall[] = [];
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls as Array<Record<string, unknown>>) {
+        const fn = (tc.function ?? {}) as Record<string, unknown>;
+        if (typeof fn.name === "string") {
+          toolCalls.push({
+            id: typeof tc.id === "string" ? tc.id : undefined,
+            function: {
+              name: fn.name,
+              arguments: fn.arguments as Record<string, unknown> | string,
+            },
+          });
+        }
+      }
+    }
+    return {
+      assistantText: typeof msg.content === "string" ? msg.content : "",
+      toolCalls,
+      promptEvalCount: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
+      evalCount: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+    };
+  }
+  // Ollama format
+  const messageObj = typeof parsed.message === "object" && parsed.message !== null
+    ? (parsed.message as Record<string, unknown>)
+    : null;
+  const rawToolCalls = Array.isArray(messageObj?.tool_calls) ? (messageObj!.tool_calls as unknown[]) : [];
+  const toolCalls: OllamaToolCall[] = [];
+  for (const raw of rawToolCalls) {
+    if (!raw || typeof raw !== "object") continue;
+    const fn = (raw as Record<string, unknown>).function;
+    if (!fn || typeof fn !== "object") continue;
+    const fnRecord = fn as Record<string, unknown>;
+    if (typeof fnRecord.name !== "string") continue;
+    toolCalls.push({
+      id: typeof (raw as Record<string, unknown>).id === "string" ? String((raw as Record<string, unknown>).id) : undefined,
+      function: { name: fnRecord.name, arguments: fnRecord.arguments as Record<string, unknown> | string },
+    });
+  }
+  return {
+    assistantText: typeof messageObj?.content === "string" ? String(messageObj.content) : "",
+    toolCalls,
+    promptEvalCount: typeof parsed.prompt_eval_count === "number" ? parsed.prompt_eval_count : 0,
+    evalCount: typeof parsed.eval_count === "number" ? parsed.eval_count : 0,
+  };
+}
+
 function extractMcpServers(config: Record<string, unknown>): McpServersConfig | null {
   const raw = config.mcpServers;
   if (!raw || typeof raw !== "object") return null;
@@ -185,10 +291,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const baseUrl = asString(config.baseUrl, DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, "");
   const rawModel = asString(config.model, DEFAULT_OLLAMA_MODEL).trim();
+  const apiFormat: ApiFormat =
+    typeof config.apiFormat === "string" && config.apiFormat === "openai"
+      ? "openai"
+      : "ollama";
+  const apiKey = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
+  const maxTokens =
+    typeof config.maxTokens === "number" && Number.isFinite(config.maxTokens)
+      ? config.maxTokens
+      : undefined;
   // Local models can be 30-120s per tool-calling turn on a 32B — the
   // prior 300s default blew up after two iterations. Bump the adapter
   // default to 30min for local-LLM realities; users can override via
-  // adapterConfig.timeoutSec.
+  // adapterConfig.timeoutSec. Cloud providers (openai format) are faster
+  // so 5 min is typically enough, but we keep 1800 as the universal default.
   const timeoutSec = asNumber(config.timeoutSec, 1800);
   const temperature =
     typeof config.temperature === "number" && Number.isFinite(config.temperature)
@@ -197,8 +313,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const systemPrompt = asString(config.system, DEFAULT_SYSTEM_PROMPT);
 
   // Resolve the model name against what Ollama actually has installed.
-  // e.g. config says "llama3.2" but Ollama stores it as "llama3.2:3b".
-  const model = await resolveModelName(baseUrl, rawModel);
+  // OpenAI-compatible providers use the model string as-is (no local resolution).
+  const model = apiFormat === "ollama"
+    ? await resolveModelName(baseUrl, rawModel)
+    : rawModel;
 
   // Connect to any MCP servers the agent has configured. If any are set,
   // we swap from streaming text to a non-streaming tool-calling loop:
@@ -323,6 +441,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         model,
         messages,
         temperature,
+        maxTokens,
+        apiFormat,
+        apiKey,
         tools: toolSpecsToOllama(mcpTools),
         bridge: mcpBridge,
         onLog,
@@ -332,18 +453,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       promptEvalCount = outcome.promptEvalCount;
       evalCount = outcome.evalCount;
     } else {
-      const requestBody: Record<string, unknown> = {
-        model,
-        messages,
-        stream: true,
-      };
-      if (temperature !== undefined) {
-        requestBody.options = { temperature };
-      }
+      const requestBody = buildChatBody({
+        model, messages, stream: true, format: apiFormat,
+        temperature, maxTokens,
+      });
 
-      const response = await fetch(`${baseUrl}/api/chat`, {
+      const response = await fetch(chatEndpoint(baseUrl, apiFormat), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: chatHeaders(apiFormat, apiKey),
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
@@ -357,7 +474,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           exitCode: 1,
           signal: null,
           timedOut: false,
-          errorMessage: `Ollama returned ${response.status}: ${errMsg}`,
+          errorMessage: `API returned ${response.status}: ${errMsg}`,
           provider: "ollama",
           model,
           resultJson: { error: errMsg },
@@ -380,8 +497,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         buffer = lines.pop() ?? "";
 
         for (const rawLine of lines) {
-          const line = rawLine.trim();
+          let line = rawLine.trim();
           if (!line) continue;
+
+          // OpenAI SSE framing: lines start with "data: ". Strip the prefix.
+          // "[DONE]" signals end-of-stream in OpenAI format.
+          if (apiFormat === "openai") {
+            if (line === "data: [DONE]") {
+              const doneLine: OllamaDoneLine = {
+                type: "done", model, prompt_eval_count: promptEvalCount,
+                eval_count: evalCount, total_duration_ns: 0,
+              };
+              await onLog("stdout", JSON.stringify(doneLine) + "\n");
+              continue;
+            }
+            if (line.startsWith("data: ")) line = line.slice(6);
+            if (line.startsWith(":")) continue; // SSE comment
+          }
 
           let parsed: Record<string, unknown>;
           try {
@@ -391,34 +523,52 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             continue;
           }
 
-          const isDone = parsed.done === true;
-          const messageObj =
-            typeof parsed.message === "object" && parsed.message !== null
-              ? (parsed.message as Record<string, unknown>)
-              : null;
-          const contentChunk =
-            typeof messageObj?.content === "string" ? messageObj.content : "";
+          if (apiFormat === "openai") {
+            // OpenAI streaming: { choices: [{ delta: { content: "..." } }], usage?: {...} }
+            const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+            const delta = ((choices[0] ?? {}) as Record<string, unknown>).delta as Record<string, unknown> | undefined;
+            const contentChunk = typeof delta?.content === "string" ? delta.content : "";
+            if (contentChunk) {
+              assistantContent += contentChunk;
+              const chunkLine: OllamaChunkLine = { type: "chunk", content: contentChunk };
+              await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+            }
+            const usage = parsed.usage as Record<string, unknown> | undefined;
+            if (usage) {
+              if (typeof usage.prompt_tokens === "number") promptEvalCount = usage.prompt_tokens;
+              if (typeof usage.completion_tokens === "number") evalCount = usage.completion_tokens;
+            }
+          } else {
+            // Ollama NDJSON streaming
+            const isDone = parsed.done === true;
+            const messageObj =
+              typeof parsed.message === "object" && parsed.message !== null
+                ? (parsed.message as Record<string, unknown>)
+                : null;
+            const contentChunk =
+              typeof messageObj?.content === "string" ? messageObj.content : "";
 
-          if (!isDone && contentChunk) {
-            assistantContent += contentChunk;
-            const chunkLine: OllamaChunkLine = { type: "chunk", content: contentChunk };
-            await onLog("stdout", JSON.stringify(chunkLine) + "\n");
-          }
+            if (!isDone && contentChunk) {
+              assistantContent += contentChunk;
+              const chunkLine: OllamaChunkLine = { type: "chunk", content: contentChunk };
+              await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+            }
 
-          if (isDone) {
-            promptEvalCount =
-              typeof parsed.prompt_eval_count === "number" ? parsed.prompt_eval_count : 0;
-            evalCount = typeof parsed.eval_count === "number" ? parsed.eval_count : 0;
-            const totalDurationNs =
-              typeof parsed.total_duration === "number" ? parsed.total_duration : 0;
-            const doneLine: OllamaDoneLine = {
-              type: "done",
-              model: typeof parsed.model === "string" ? parsed.model : model,
-              prompt_eval_count: promptEvalCount,
-              eval_count: evalCount,
-              total_duration_ns: totalDurationNs,
-            };
-            await onLog("stdout", JSON.stringify(doneLine) + "\n");
+            if (isDone) {
+              promptEvalCount =
+                typeof parsed.prompt_eval_count === "number" ? parsed.prompt_eval_count : 0;
+              evalCount = typeof parsed.eval_count === "number" ? parsed.eval_count : 0;
+              const totalDurationNs =
+                typeof parsed.total_duration === "number" ? parsed.total_duration : 0;
+              const doneLine: OllamaDoneLine = {
+                type: "done",
+                model: typeof parsed.model === "string" ? parsed.model : model,
+                prompt_eval_count: promptEvalCount,
+                eval_count: evalCount,
+                total_duration_ns: totalDurationNs,
+              };
+              await onLog("stdout", JSON.stringify(doneLine) + "\n");
+            }
           }
         }
       }
@@ -505,6 +655,9 @@ interface ToolLoopParams {
   model: string;
   messages: OllamaMessage[];
   temperature: number | undefined;
+  maxTokens: number | undefined;
+  apiFormat: ApiFormat;
+  apiKey: string;
   tools: Array<Record<string, unknown>>;
   bridge: McpBridge;
   onLog: AdapterExecutionContext["onLog"];
@@ -528,26 +681,21 @@ interface ToolLoopOutcome {
  * or MCP_TOOL_ITERATION_LIMIT is reached.
  */
 async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
-  const { baseUrl, model, messages, temperature, tools, bridge, onLog, signal } = params;
+  const { baseUrl, model, messages, temperature, maxTokens, apiFormat, apiKey, tools, bridge, onLog, signal } = params;
 
   let totalPromptEval = 0;
   let totalEval = 0;
   let finalAssistantContent = "";
 
   for (let iter = 0; iter < MCP_TOOL_ITERATION_LIMIT; iter += 1) {
-    const requestBody: Record<string, unknown> = {
-      model,
-      messages,
-      tools,
-      stream: false,
-    };
-    if (temperature !== undefined) {
-      requestBody.options = { temperature };
-    }
+    const requestBody = buildChatBody({
+      model, messages, stream: false, format: apiFormat,
+      temperature, maxTokens, tools,
+    });
 
-    const response = await fetch(`${baseUrl}/api/chat`, {
+    const response = await fetch(chatEndpoint(baseUrl, apiFormat), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: chatHeaders(apiFormat, apiKey),
       body: JSON.stringify(requestBody),
       signal,
     });
@@ -555,41 +703,17 @@ async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
       throw new Error(
-        `Ollama returned ${response.status}: ${bodyText.trim() || response.statusText}`,
+        `API returned ${response.status}: ${bodyText.trim() || response.statusText}`,
       );
     }
 
     const parsed = (await response.json()) as Record<string, unknown>;
-    const messageObj =
-      typeof parsed.message === "object" && parsed.message !== null
-        ? (parsed.message as Record<string, unknown>)
-        : null;
+    const pr = parseNonStreamResponse(parsed, apiFormat);
+    totalPromptEval += pr.promptEvalCount;
+    totalEval += pr.evalCount;
 
-    if (typeof parsed.prompt_eval_count === "number") totalPromptEval += parsed.prompt_eval_count;
-    if (typeof parsed.eval_count === "number") totalEval += parsed.eval_count;
-
-    const assistantText = typeof messageObj?.content === "string" ? messageObj.content : "";
-    const rawToolCalls = Array.isArray(messageObj?.tool_calls)
-      ? (messageObj.tool_calls as unknown[])
-      : [];
-
-    const toolCallsNormalized: OllamaToolCall[] = [];
-    for (const raw of rawToolCalls) {
-      if (!raw || typeof raw !== "object") continue;
-      const fn = (raw as Record<string, unknown>).function;
-      if (!fn || typeof fn !== "object") continue;
-      const fnRecord = fn as Record<string, unknown>;
-      if (typeof fnRecord.name !== "string") continue;
-      toolCallsNormalized.push({
-        id: typeof (raw as Record<string, unknown>).id === "string"
-          ? String((raw as Record<string, unknown>).id)
-          : undefined,
-        function: {
-          name: fnRecord.name,
-          arguments: fnRecord.arguments as Record<string, unknown> | string,
-        },
-      });
-    }
+    const assistantText = pr.assistantText;
+    const toolCallsNormalized: OllamaToolCall[] = [...pr.toolCalls];
 
     // Fallback: code-tuned models (qwen2.5-coder etc.) sometimes emit
     // tool calls as JSON in the message content instead of via the
