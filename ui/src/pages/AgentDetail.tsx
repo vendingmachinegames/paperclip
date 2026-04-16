@@ -2469,10 +2469,21 @@ function McpServersTab({
       agentsApi.update(
         agent.id,
         {
+          // Must send replaceAdapterConfig:true so the MCP tab's save is
+          // authoritative and symmetric with the Configuration tab. The
+          // Config tab already sends replaceAdapterConfig:true; if this
+          // tab sent a shallow patch instead, saving the Config tab
+          // later could silently drop mcpServers when the form's local
+          // `agent.adapterConfig` snapshot was stale (it happened — PA
+          // agent lost its Gmail MCP wiring this way). Spreading
+          // agent.adapterConfig first keeps the intent of "change only
+          // mcpServers"; the flag just makes sure the server doesn't
+          // silently merge on top of whatever's already there.
           adapterConfig: {
             ...agent.adapterConfig,
             mcpServers: servers ?? null,
           },
+          replaceAdapterConfig: true,
         },
         companyId,
       ),
