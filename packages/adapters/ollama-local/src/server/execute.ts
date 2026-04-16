@@ -569,18 +569,6 @@ async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
       ? (messageObj.tool_calls as unknown[])
       : [];
 
-    // Record assistant turn (visible in UI stream) even if it's a
-    // tool-call-only turn with empty content.
-    if (assistantText) {
-      const chunkLine: OllamaChunkLine = { type: "chunk", content: assistantText };
-      await onLog("stdout", JSON.stringify(chunkLine) + "\n");
-      finalAssistantContent = assistantText;
-    }
-
-    const assistantMessage: OllamaMessage = {
-      role: "assistant",
-      content: assistantText,
-    };
     const toolCallsNormalized: OllamaToolCall[] = [];
     for (const raw of rawToolCalls) {
       if (!raw || typeof raw !== "object") continue;
@@ -598,6 +586,41 @@ async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
         },
       });
     }
+
+    // Fallback: code-tuned models (qwen2.5-coder etc.) sometimes emit
+    // tool calls as JSON in the message content instead of via the
+    // structured tool_calls field. Try to recover them, but only when
+    // the structured field was empty — never override an explicit call.
+    let parsedFromText = false;
+    let cleanedAssistantText = assistantText;
+    if (toolCallsNormalized.length === 0 && assistantText) {
+      const recovered = extractTextEmittedToolCalls(assistantText, tools);
+      if (recovered.calls.length > 0) {
+        toolCallsNormalized.push(...recovered.calls);
+        cleanedAssistantText = recovered.remainingText;
+        parsedFromText = true;
+        await onLog(
+          "stderr",
+          `[mcp] recovered ${recovered.calls.length} tool call(s) from message text (model emitted JSON instead of tool_calls)\n`,
+        );
+      }
+    }
+
+    // Record assistant turn (visible in UI stream) even if it's a
+    // tool-call-only turn with empty content. When we recovered tool
+    // calls from text, hide the JSON from the chat — only the cleaned
+    // text (often empty) belongs in the visible stream.
+    const visibleText = parsedFromText ? cleanedAssistantText : assistantText;
+    if (visibleText) {
+      const chunkLine: OllamaChunkLine = { type: "chunk", content: visibleText };
+      await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+      finalAssistantContent = visibleText;
+    }
+
+    const assistantMessage: OllamaMessage = {
+      role: "assistant",
+      content: visibleText,
+    };
     if (toolCallsNormalized.length > 0) {
       assistantMessage.tool_calls = toolCallsNormalized;
     }
@@ -650,4 +673,139 @@ async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
     promptEvalCount: totalPromptEval,
     evalCount: totalEval,
   };
+}
+
+/**
+ * Some local models (qwen2.5-coder, occasionally llama3.2 + others)
+ * emit tool calls as a JSON object inside the assistant content
+ * instead of via Ollama's structured `tool_calls` field — e.g.:
+ *
+ *   {"name": "gmail__search_emails", "arguments": {"query": "..."}}
+ *
+ * When that happens the structured field comes back empty, the
+ * adapter sees no tool to execute, and the JSON ends up rendered as
+ * raw text in the Boardroom chat. This helper scans the message body
+ * for those literal JSON shapes and lifts them out into proper tool
+ * calls. We only accept matches whose `name` is one of the tools we
+ * actually registered with the model — random JSON in the reply
+ * stays put.
+ *
+ * Supported shapes (most common across model families):
+ *   {"name": "<tool>", "arguments": {...}}
+ *   {"name": "<tool>", "parameters": {...}}
+ *   {"function": {"name": "<tool>", "arguments": {...}}}
+ *   ```json\n{...}\n```  (fenced)
+ *   ```\n{...}\n```      (unlabeled fence)
+ */
+function extractTextEmittedToolCalls(
+  text: string,
+  registeredTools: Array<Record<string, unknown>>,
+): { calls: OllamaToolCall[]; remainingText: string } {
+  const knownNames = new Set<string>();
+  for (const t of registeredTools) {
+    const fn = t.function as Record<string, unknown> | undefined;
+    if (fn && typeof fn.name === "string") knownNames.add(fn.name);
+  }
+  if (knownNames.size === 0) return { calls: [], remainingText: text };
+
+  const calls: OllamaToolCall[] = [];
+  let remaining = text;
+
+  // Strip any fenced JSON block (```json ... ``` or ``` ... ```) that
+  // contains a registered tool call, then also handle bare-object
+  // emissions outside of fences.
+  const fenceRegex = /```(?:json)?\s*\n([\s\S]*?)```/g;
+  remaining = remaining.replace(fenceRegex, (whole, inner: string) => {
+    const trimmed = inner.trim();
+    const recovered = tryParseToolCallObject(trimmed, knownNames);
+    if (recovered) {
+      calls.push(recovered);
+      return "";
+    }
+    return whole;
+  });
+
+  // Scan for top-level JSON objects in the (possibly already cleaned)
+  // remainder. Use a brace-balanced scanner so nested objects in
+  // arguments survive intact.
+  const objects = extractTopLevelJsonObjects(remaining);
+  for (const obj of objects) {
+    const recovered = tryParseToolCallObject(obj.json, knownNames);
+    if (recovered) {
+      calls.push(recovered);
+      remaining = remaining.replace(obj.json, "");
+    }
+  }
+
+  return { calls, remainingText: remaining.replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+function tryParseToolCallObject(raw: string, knownNames: Set<string>): OllamaToolCall | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+
+  // Shape A: {"name": "...", "arguments": {...}} or {"name": "...", "parameters": {...}}
+  let name: string | null = null;
+  let args: unknown = undefined;
+  if (typeof obj.name === "string") {
+    name = obj.name;
+    args = obj.arguments ?? obj.parameters;
+  }
+  // Shape B: {"function": {"name": "...", "arguments": ...}}
+  if (!name && obj.function && typeof obj.function === "object") {
+    const fn = obj.function as Record<string, unknown>;
+    if (typeof fn.name === "string") {
+      name = fn.name;
+      args = fn.arguments ?? fn.parameters;
+    }
+  }
+  if (!name || !knownNames.has(name)) return null;
+
+  return {
+    function: {
+      name,
+      arguments: (args ?? {}) as Record<string, unknown> | string,
+    },
+  };
+}
+
+function extractTopLevelJsonObjects(text: string): Array<{ json: string; start: number; end: number }> {
+  const out: Array<{ json: string; start: number; end: number }> = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "{") {
+      i += 1;
+      continue;
+    }
+    // Brace-balanced scan, respecting strings.
+    let depth = 0;
+    let j = i;
+    let inString = false;
+    let escape = false;
+    for (; j < text.length; j += 1) {
+      const ch = text[j];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          out.push({ json: text.slice(i, j + 1), start: i, end: j + 1 });
+          i = j + 1;
+          break;
+        }
+      }
+    }
+    if (depth !== 0) break; // unbalanced — stop scanning
+    if (j >= text.length) break;
+  }
+  return out;
 }
