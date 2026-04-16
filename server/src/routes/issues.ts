@@ -2366,8 +2366,22 @@ export function issueRoutes(
         && !attemptedButUnresolvedMention
       ) {
         const allAgents = await agentsSvc.list(currentIssue.companyId);
-        for (const agent of allAgents) {
-          if (agent.status === "terminated" || agent.status === "paused") continue;
+        // Prefer waking the CEO alone when there's one in the company —
+        // they're the natural "room host" for mention-less messages and
+        // can @-dispatch to a specific teammate if needed. Waking every
+        // agent on every mention-less comment causes every domain expert
+        // to try to answer, which confuses users: an ArtDirector has no
+        // guardrail to stay silent on a devops question, so they chime
+        // in anyway. Companies with no CEO fall back to the old mass-
+        // wake behaviour (early drafts, solo-CEO onboarding, etc.).
+        const ceoAgents = allAgents.filter(
+          (a) => a.role === "ceo" && a.status !== "terminated" && a.status !== "paused",
+        );
+        const agentsToWake =
+          ceoAgents.length > 0
+            ? ceoAgents
+            : allAgents.filter((a) => a.status !== "terminated" && a.status !== "paused");
+        for (const agent of agentsToWake) {
           wakeups.set(agent.id, {
             source: "automation",
             triggerDetail: "system",
