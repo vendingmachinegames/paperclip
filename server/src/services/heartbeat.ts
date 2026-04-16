@@ -3488,15 +3488,29 @@ export function heartbeatService(db: Db) {
             const issueComment = buildHeartbeatRunIssueComment(persistedResultJson);
             if (issueComment) {
               // Conversation-kind issues (the Boardroom) are chat surfaces,
-              // not task threads. The agent's actual reply is already in
-              // the stream; the run-summary recap would just clutter.
+              // not task threads. If the agent already posted its reply via
+              // tools during the run (claude_local + paperclip MCP does
+              // this), the recap would just clutter. But if the run produced
+              // zero comments — true for ollama_local and any other adapter
+              // without comment-posting tools — the reply lives only in the
+              // run log and the user wouldn't see it. Only suppress when the
+              // run actually emitted a comment.
               const issueKindRow = await db
                 .select({ kind: issues.kind })
                 .from(issues)
                 .where(eq(issues.id, issueId))
                 .limit(1);
               const isConversation = issueKindRow[0]?.kind === "conversation";
-              if (!isConversation) {
+              let suppressRecap = false;
+              if (isConversation) {
+                const existing = await db
+                  .select({ id: issueComments.id })
+                  .from(issueComments)
+                  .where(eq(issueComments.createdByRunId, finalizedRun.id))
+                  .limit(1);
+                suppressRecap = existing.length > 0;
+              }
+              if (!suppressRecap) {
                 await issuesSvc.addComment(issueId, issueComment, { agentId: agent.id, runId: finalizedRun.id });
               }
             }
