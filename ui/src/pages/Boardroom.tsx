@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { Paperclip } from "lucide-react";
 import { useParams } from "@/lib/router";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import type { Agent, IssueComment } from "@paperclipai/shared";
@@ -112,7 +113,9 @@ export function Boardroom() {
   }, [agentsQuery.data]);
 
   const [draft, setDraft] = useState("");
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
   const lastCommentIdRef = useRef<string | null>(null);
 
   const addComment = useMutation({
@@ -132,6 +135,43 @@ export function Boardroom() {
       }
     },
   });
+
+  const uploadAttachment = useMutation({
+    mutationFn: async (file: File) => {
+      if (!boardroomIssue || !company) throw new Error("Boardroom not ready");
+      return issuesApi.uploadAttachment(company.id, boardroomIssue.id, file);
+    },
+    onError: (err) => {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    },
+    onSuccess: () => setUploadError(null),
+  });
+
+  async function attachFilesToDraft(files: FileList | File[]) {
+    const list = Array.from(files);
+    for (const file of list) {
+      try {
+        const att = await uploadAttachment.mutateAsync(file);
+        const name = att.originalFilename ?? file.name;
+        // Safe in markdown: escape ] and ) in the name; leave path as-is.
+        const safe = name.replace(/[[\]]/g, "\\$&").replace(/\)/g, "\\)");
+        const snippet = file.type.startsWith("image/")
+          ? `![${safe}](${att.contentPath})`
+          : `[${safe}](${att.contentPath})`;
+        setDraft((prev) => (prev.trim() ? `${prev}\n\n${snippet}` : snippet));
+      } catch {
+        // error state already set by onError
+      }
+    }
+  }
+
+  function handleAttachButton(e: ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    void attachFilesToDraft(files);
+    // Clear so re-selecting the same file still fires change.
+    if (attachInputRef.current) attachInputRef.current.value = "";
+  }
 
   // Auto-scroll to bottom when new comments arrive.
   useEffect(() => {
@@ -202,8 +242,15 @@ export function Boardroom() {
             <MarkdownEditor
               value={draft}
               onChange={setDraft}
-              placeholder="Post to the Boardroom… type @ to mention an agent."
+              placeholder="Post to the Boardroom… type @ to mention an agent. Drag or paste files to attach."
               mentions={mentionOptions}
+              imageUploadHandler={async (file) => {
+                const att = await uploadAttachment.mutateAsync(file);
+                return att.contentPath;
+              }}
+              onDropFile={async (file) => {
+                await attachFilesToDraft([file]);
+              }}
               onSubmit={() => {
                 const trimmed = draft.trim();
                 if (trimmed && !addComment.isPending) addComment.mutate(trimmed);
@@ -212,6 +259,24 @@ export function Boardroom() {
               contentClassName="min-h-[52px] max-h-[28dvh] overflow-y-auto pr-1 text-sm scrollbar-auto-hide"
             />
           </div>
+          <input
+            ref={attachInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleAttachButton}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => attachInputRef.current?.click()}
+            disabled={uploadAttachment.isPending}
+            className="shrink-0"
+            title="Attach file"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <Button
             type="button"
             onClick={() => {
@@ -224,6 +289,14 @@ export function Boardroom() {
             {addComment.isPending ? "Posting…" : "Post"}
           </Button>
         </div>
+        {uploadAttachment.isPending && (
+          <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground">
+            Uploading attachment…
+          </p>
+        )}
+        {uploadError && (
+          <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">{uploadError}</p>
+        )}
         {addComment.error && (
           <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">
             {addComment.error instanceof Error ? addComment.error.message : "Failed to post"}
