@@ -2350,10 +2350,20 @@ export function issueRoutes(
       // chat feels like a chat instead of a bulletin board. Task issues
       // keep the old @mention-required behavior (an assignee already
       // drives those via the assigneeId branch above).
+      //
+      // Guard against typo'd mentions (e.g. "@A" when no agent matches):
+      // if the message contains `@` but we resolved zero agents from it,
+      // treat that as an attempted mention that missed, not as "no
+      // mention at all" — and do NOT mass-wake everyone. Otherwise every
+      // agent in the company would post "not directed at me" noise.
+      const containsMentionMarker = /\B@\S/.test(req.body.body);
+      const attemptedButUnresolvedMention =
+        containsMentionMarker && wakeups.size === 0 && mentionedIds.length === 0;
       if (
         currentIssue.kind === "conversation"
         && !actorIsAgent
         && wakeups.size === 0
+        && !attemptedButUnresolvedMention
       ) {
         const allAgents = await agentsSvc.list(currentIssue.companyId);
         for (const agent of allAgents) {
