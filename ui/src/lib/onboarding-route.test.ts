@@ -10,12 +10,12 @@ describe("isOnboardingPath", () => {
     expect(isOnboardingPath("/onboarding")).toBe(true);
   });
 
-  it("matches a company-prefixed onboarding route", () => {
-    expect(isOnboardingPath("/pap/onboarding")).toBe(true);
+  it("matches a company-scoped onboarding route", () => {
+    expect(isOnboardingPath("/acme/onboarding")).toBe(true);
   });
 
   it("ignores non-onboarding routes", () => {
-    expect(isOnboardingPath("/pap/dashboard")).toBe(false);
+    expect(isOnboardingPath("/acme/dashboard")).toBe(false);
   });
 });
 
@@ -29,21 +29,31 @@ describe("resolveRouteOnboardingOptions", () => {
     ).toEqual({ initialStep: 1 });
   });
 
-  it("opens agent creation when the prefixed company exists", () => {
+  it("opens agent creation when the slug-matched company exists", () => {
     expect(
       resolveRouteOnboardingOptions({
-        pathname: "/pap/onboarding",
-        companyPrefix: "pap",
-        companies: [{ id: "company-1", issuePrefix: "PAP" }],
+        pathname: "/acme/onboarding",
+        companySlug: "acme",
+        companies: [{ id: "company-1", slug: "acme" }],
       }),
     ).toEqual({ initialStep: 2, companyId: "company-1" });
   });
 
-  it("falls back to company creation when the prefixed company is missing", () => {
+  it("matches case-insensitively so legacy uppercase URLs still resolve", () => {
     expect(
       resolveRouteOnboardingOptions({
-        pathname: "/pap/onboarding",
-        companyPrefix: "pap",
+        pathname: "/ACME/onboarding",
+        companySlug: "ACME",
+        companies: [{ id: "company-1", slug: "acme" }],
+      }),
+    ).toEqual({ initialStep: 2, companyId: "company-1" });
+  });
+
+  it("falls back to company creation when the slug-matched company is missing", () => {
+    expect(
+      resolveRouteOnboardingOptions({
+        pathname: "/acme/onboarding",
+        companySlug: "acme",
         companies: [],
       }),
     ).toEqual({ initialStep: 1 });

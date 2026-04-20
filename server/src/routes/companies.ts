@@ -6,6 +6,7 @@ import {
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
   createCompanySchema,
+  createDraftCompanySchema,
   feedbackTargetTypeSchema,
   feedbackTraceStatusSchema,
   feedbackVoteValueSchema,
@@ -17,12 +18,18 @@ import { validate } from "../middleware/validate.js";
 import {
   accessService,
   agentService,
+  boardroomService,
+  boardroomCardsService,
   budgetService,
   companyPortabilityService,
   companyService,
   feedbackService,
+  issueService,
+  libraryService,
   logActivity,
+  seedOnboardingCeo,
 } from "../services/index.js";
+import { AGENT_ADAPTER_TYPES, AGENT_ROLES } from "@paperclipai/shared";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
@@ -30,6 +37,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const router = Router();
   const svc = companyService(db);
   const agents = agentService(db);
+  const boardroom = boardroomService(db);
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
   const budgets = budgetService(db);
@@ -271,6 +279,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     }
     const company = await svc.create(req.body);
     await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    await boardroom.getOrCreate(company.id);
     await logActivity(db, {
       companyId: company.id,
       actorType: "user",
@@ -292,6 +301,214 @@ export function companyRoutes(db: Db, storage?: StorageService) {
         req.actor.userId ?? "board",
       );
     }
+    res.status(201).json(company);
+  });
+
+  router.get("/:companyId/boardroom", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const company = await svc.getById(companyId);
+    if (!company) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    const issue = await boardroom.getOrCreate(companyId);
+    res.json({ boardroom: issue });
+  });
+
+  const cardsSvc = boardroomCardsService(db);
+  const library = libraryService(db);
+
+  router.get("/:companyId/library", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const limitRaw = req.query.limit;
+    const limit = typeof limitRaw === "string" ? Number.parseInt(limitRaw, 10) : undefined;
+    const items = await library.listForCompany(companyId, {
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    res.json({ items });
+  });
+
+  router.get("/:companyId/boardroom/cards", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const issue = await boardroom.getOrCreate(companyId);
+    const cards = await cardsSvc.listForIssue(issue.id);
+    res.json({ cards });
+  });
+
+  async function loadCardForCompany(companyId: string, cardId: string) {
+    const card = await cardsSvc.getById(cardId);
+    if (!card || card.companyId !== companyId) return null;
+    return card;
+  }
+
+  router.post("/:companyId/boardroom/cards/:cardId/accept", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const cardId = req.params.cardId as string;
+    assertCompanyAccess(req, companyId);
+
+    const card = await loadCardForCompany(companyId, cardId);
+    if (!card) {
+      res.status(404).json({ error: "Card not found" });
+      return;
+    }
+    if (card.state !== "pending") {
+      res.status(200).json({ card });
+      return;
+    }
+
+    const actorUserId = req.actor.userId ?? "local-board";
+    let resultPayload: Record<string, unknown> = {};
+
+    try {
+      if (card.kind === "hire_proposal") {
+        resultPayload = await acceptHireProposal(card);
+      } else if (card.kind === "task_completion") {
+        resultPayload = await acceptTaskCompletion(card);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to accept card";
+      res.status(422).json({ error: message });
+      return;
+    }
+
+    const updated = await cardsSvc.resolve({
+      id: card.id,
+      nextState: "accepted",
+      resolvedByUserId: actorUserId,
+      resultPayload,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: "user",
+      actorId: actorUserId,
+      action: "boardroom_card.accepted",
+      entityType: "boardroom_card",
+      entityId: card.id,
+      details: { kind: card.kind, resultPayload },
+    });
+
+    res.json({ card: updated });
+  });
+
+  router.post("/:companyId/boardroom/cards/:cardId/reject", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const cardId = req.params.cardId as string;
+    assertCompanyAccess(req, companyId);
+
+    const card = await loadCardForCompany(companyId, cardId);
+    if (!card) {
+      res.status(404).json({ error: "Card not found" });
+      return;
+    }
+    if (card.state !== "pending") {
+      res.json({ card });
+      return;
+    }
+
+    const actorUserId = req.actor.userId ?? "local-board";
+    const updated = await cardsSvc.resolve({
+      id: card.id,
+      nextState: "rejected",
+      resolvedByUserId: actorUserId,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: "user",
+      actorId: actorUserId,
+      action: "boardroom_card.rejected",
+      entityType: "boardroom_card",
+      entityId: card.id,
+      details: { kind: card.kind },
+    });
+
+    res.json({ card: updated });
+  });
+
+  async function acceptHireProposal(card: Awaited<ReturnType<typeof cardsSvc.getById>>): Promise<Record<string, unknown>> {
+    if (!card) throw new Error("Card not found");
+    const payload = card.payload ?? {};
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    if (!name) throw new Error("hire_proposal payload missing `name`");
+
+    const roleRaw = typeof payload.role === "string" ? payload.role.trim() : "general";
+    const role = (AGENT_ROLES as readonly string[]).includes(roleRaw) ? roleRaw : "general";
+
+    const adapterRaw = typeof payload.adapterType === "string" ? payload.adapterType.trim() : "claude_local";
+    const adapterType = (AGENT_ADAPTER_TYPES as readonly string[]).includes(adapterRaw) ? adapterRaw : "claude_local";
+
+    const title = typeof payload.title === "string" ? payload.title : null;
+    const icon = typeof payload.icon === "string" ? payload.icon : null;
+    const reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;
+    const description = typeof payload.description === "string" ? payload.description : null;
+
+    const agents = agentService(db);
+    const created = await agents.create(card.companyId, {
+      name,
+      role,
+      title,
+      icon,
+      reportsTo,
+      adapterType,
+      adapterConfig: {},
+      metadata: description ? { description } : {},
+      status: "idle",
+    } as Parameters<typeof agents.create>[1]);
+
+    return { createdAgentId: created.id, name: created.name, role: created.role };
+  }
+
+  async function acceptTaskCompletion(card: Awaited<ReturnType<typeof cardsSvc.getById>>): Promise<Record<string, unknown>> {
+    if (!card) throw new Error("Card not found");
+    const payload = card.payload ?? {};
+    const taskIssueId = typeof payload.issueId === "string" ? payload.issueId : "";
+    if (!taskIssueId) throw new Error("task_completion payload missing `issueId`");
+
+    const issuesSvc = issueService(db);
+    const updated = await issuesSvc.update(taskIssueId, { status: "done" });
+    if (!updated) throw new Error(`Issue ${taskIssueId} not found`);
+    return { taskIssueId, status: "done" };
+  }
+
+  router.get("/by-slug/:slug", async (req, res) => {
+    const slug = String(req.params.slug);
+    const resolved = await svc.getBySlug(slug);
+    if (!resolved) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    assertCompanyAccess(req, resolved.company.id);
+    res.json({
+      company: resolved.company,
+      redirectedFromSlug: resolved.redirected ? slug.toLowerCase() : null,
+    });
+  });
+
+  router.post("/draft", validate(createDraftCompanySchema), async (req, res) => {
+    assertBoard(req);
+    if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
+      throw forbidden("Instance admin required");
+    }
+    const company = await svc.create({
+      name: req.body.name ?? "Untitled Company",
+      draft: true,
+    });
+    await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
+    const room = await boardroom.getOrCreate(company.id);
+    await seedOnboardingCeo({ db, companyId: company.id, boardroomIssueId: room.id });
+    await logActivity(db, {
+      companyId: company.id,
+      actorType: "user",
+      actorId: req.actor.userId ?? "board",
+      action: "company.draft_created",
+      entityType: "company",
+      entityId: company.id,
+      details: { slug: company.slug },
+    });
     res.status(201).json(company);
   });
 

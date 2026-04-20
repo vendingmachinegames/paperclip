@@ -7,11 +7,28 @@ import type {
   CompanyPortabilityImportResult,
   CompanyPortabilityPreviewRequest,
   CompanyPortabilityPreviewResult,
+  Issue,
   UpdateCompanyBranding,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
 export type CompanyStats = Record<string, { agentCount: number; issueCount: number }>;
+
+export interface BoardroomCard {
+  id: string;
+  companyId: string;
+  issueId: string;
+  commentId: string;
+  createdByAgentId: string | null;
+  kind: string;
+  state: "pending" | "accepted" | "rejected";
+  payload: Record<string, unknown>;
+  resultPayload: Record<string, unknown> | null;
+  resolvedByUserId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export const companiesApi = {
   list: () => api.get<Company[]>("/companies"),
@@ -23,6 +40,26 @@ export const companiesApi = {
     budgetMonthlyCents?: number;
   }) =>
     api.post<Company>("/companies", data),
+  createDraft: (data?: { name?: string }) =>
+    api.post<Company>("/companies/draft", data ?? {}),
+  getBySlug: (slug: string) =>
+    api.get<{ company: Company; redirectedFromSlug: string | null }>(
+      `/companies/by-slug/${encodeURIComponent(slug)}`,
+    ),
+  getBoardroom: (companyId: string) =>
+    api.get<{ boardroom: Issue }>(`/companies/${companyId}/boardroom`),
+  listBoardroomCards: (companyId: string) =>
+    api.get<{ cards: BoardroomCard[] }>(`/companies/${companyId}/boardroom/cards`),
+  acceptBoardroomCard: (companyId: string, cardId: string) =>
+    api.post<{ card: BoardroomCard }>(
+      `/companies/${companyId}/boardroom/cards/${cardId}/accept`,
+      {},
+    ),
+  rejectBoardroomCard: (companyId: string, cardId: string) =>
+    api.post<{ card: BoardroomCard }>(
+      `/companies/${companyId}/boardroom/cards/${cardId}/reject`,
+      {},
+    ),
   update: (
     companyId: string,
     data: Partial<

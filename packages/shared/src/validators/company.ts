@@ -1,9 +1,22 @@
 import { z } from "zod";
-import { COMPANY_STATUSES } from "../constants.js";
+import { COMPANY_STATUSES, COMPANY_SLUG_RESERVED } from "../constants.js";
 
 const logoAssetIdSchema = z.string().uuid().nullable().optional();
 const brandColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional();
 const feedbackDataSharingTermsVersionSchema = z.string().min(1).nullable().optional();
+
+export const companySlugSchema = z
+  .string()
+  .min(2)
+  .max(60)
+  .regex(
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+    "Slug must be lowercase alphanumeric with single hyphens as separators",
+  )
+  .refine(
+    (value) => !COMPANY_SLUG_RESERVED.has(value),
+    "Slug is reserved and cannot be used",
+  );
 
 export const createCompanySchema = z.object({
   name: z.string().min(1),
@@ -13,9 +26,17 @@ export const createCompanySchema = z.object({
 
 export type CreateCompany = z.infer<typeof createCompanySchema>;
 
+export const createDraftCompanySchema = z.object({
+  name: z.string().min(1).optional(),
+}).strict();
+
+export type CreateDraftCompany = z.infer<typeof createDraftCompanySchema>;
+
 export const updateCompanySchema = createCompanySchema
   .partial()
   .extend({
+    slug: companySlugSchema.optional(),
+    isDraft: z.boolean().optional(),
     status: z.enum(COMPANY_STATUSES).optional(),
     spentMonthlyCents: z.number().int().nonnegative().optional(),
     requireBoardApprovalForNewAgents: z.boolean().optional(),

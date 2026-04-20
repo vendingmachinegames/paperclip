@@ -35,7 +35,7 @@ type ProjectSidebarSlot = ReturnType<typeof usePluginSlots>["slots"][number];
 function SortableProjectItem({
   activeProjectRef,
   companyId,
-  companyPrefix,
+  companySlug,
   isMobile,
   project,
   projectSidebarSlots,
@@ -43,7 +43,7 @@ function SortableProjectItem({
 }: {
   activeProjectRef: string | null;
   companyId: string | null;
-  companyPrefix: string | null;
+  companySlug: string | null;
   isMobile: boolean;
   project: Project;
   projectSidebarSlots: ProjectSidebarSlot[];
@@ -101,7 +101,7 @@ function SortableProjectItem({
                 slot={slot}
                 context={{
                   companyId,
-                  companyPrefix,
+                  companySlug,
                   projectId: project.id,
                   projectRef: routeRef,
                   entityId: project.id,
@@ -220,7 +220,7 @@ export function SidebarProjects() {
                   key={project.id}
                   activeProjectRef={activeProjectRef}
                   companyId={selectedCompanyId}
-                  companyPrefix={selectedCompany?.issuePrefix ?? null}
+                  companySlug={selectedCompany?.slug ?? null}
                   isMobile={isMobile}
                   project={project}
                   projectSidebarSlots={projectSidebarSlots}

@@ -1,4 +1,13 @@
 export { companyService } from "./companies.js";
+export { boardroomService, type BoardroomService } from "./boardroom.js";
+export {
+  boardroomCardsService,
+  type BoardroomCardsService,
+  type BoardroomCardRow,
+  type BoardroomCardKind,
+  type BoardroomCardState,
+} from "./boardroom-cards.js";
+export { seedOnboardingCeo } from "./onboarding-ceo.js";
 export { feedbackService } from "./feedback.js";
 export { companySkillService } from "./company-skills.js";
 export { agentService, deduplicateAgentName } from "./agents.js";
@@ -27,6 +36,7 @@ export { companyPortabilityService } from "./company-portability.js";
 export { executionWorkspaceService } from "./execution-workspaces.js";
 export { workspaceOperationService } from "./workspace-operations.js";
 export { workProductService } from "./work-products.js";
+export { libraryService, type LibraryItem, type LibraryItemKind, type LibraryService } from "./library.js";
 export { logActivity, type LogActivityInput } from "./activity-log.js";
 export { notifyHireApproved, type NotifyHireApprovedInput } from "./hire-hook.js";
 export { publishLiveEvent, subscribeCompanyLiveEvents } from "./live-events.js";

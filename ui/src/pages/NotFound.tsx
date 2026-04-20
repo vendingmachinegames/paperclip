@@ -22,14 +22,14 @@ export function NotFoundPage({ scope = "global", requestedPrefix }: NotFoundPage
   }, [setBreadcrumbs]);
 
   const fallbackCompany = selectedCompany ?? companies[0] ?? null;
-  const dashboardHref = fallbackCompany ? `/${fallbackCompany.issuePrefix}/dashboard` : "/";
+  const dashboardHref = fallbackCompany ? `/${fallbackCompany.slug}/dashboard` : "/";
   const currentPath = `${location.pathname}${location.search}${location.hash}`;
-  const normalizedPrefix = requestedPrefix?.toUpperCase();
+  const normalizedSlug = requestedPrefix?.toLowerCase();
 
   const title = scope === "invalid_company_prefix" ? "Company not found" : "Page not found";
   const description =
     scope === "invalid_company_prefix"
-      ? `No company matches prefix "${normalizedPrefix ?? "unknown"}".`
+      ? `No company matches slug "${normalizedSlug ?? "unknown"}".`
       : "This route does not exist.";
 
   return (

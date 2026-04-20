@@ -5,9 +5,9 @@ import type { Issue } from "@paperclipai/shared";
 import { useCompany } from "@/context/CompanyContext";
 import { IssueLinkQuicklook } from "@/components/IssueLinkQuicklook";
 import {
-  applyCompanyPrefix,
-  extractCompanyPrefixFromPath,
-  normalizeCompanyPrefix,
+  applyCompanySlug,
+  extractCompanySlugFromPath,
+  normalizeCompanySlug,
 } from "@/lib/company-routes";
 
 function parseIssuePathIdFromPath(pathname: string | null | undefined): string | null {
@@ -16,13 +16,13 @@ function parseIssuePathIdFromPath(pathname: string | null | undefined): string |
   return match?.[1] ?? null;
 }
 
-function resolveTo(to: To, companyPrefix: string | null): To {
+function resolveTo(to: To, companySlug: string | null): To {
   if (typeof to === "string") {
-    return applyCompanyPrefix(to, companyPrefix);
+    return applyCompanySlug(to, companySlug);
   }
 
   if (to.pathname && to.pathname.startsWith("/")) {
-    const pathname = applyCompanyPrefix(to.pathname, companyPrefix);
+    const pathname = applyCompanySlug(to.pathname, companySlug);
     if (pathname !== to.pathname) {
       return { ...to, pathname };
     }
@@ -31,19 +31,19 @@ function resolveTo(to: To, companyPrefix: string | null): To {
   return to;
 }
 
-function useActiveCompanyPrefix(): string | null {
+function useActiveCompanySlug(): string | null {
   const { selectedCompany } = useCompany();
-  const params = RouterDom.useParams<{ companyPrefix?: string }>();
+  const params = RouterDom.useParams<{ companySlug?: string }>();
   const location = RouterDom.useLocation();
 
-  if (params.companyPrefix) {
-    return normalizeCompanyPrefix(params.companyPrefix);
+  if (params.companySlug) {
+    return normalizeCompanySlug(params.companySlug);
   }
 
-  const pathPrefix = extractCompanyPrefixFromPath(location.pathname);
-  if (pathPrefix) return pathPrefix;
+  const pathSlug = extractCompanySlugFromPath(location.pathname);
+  if (pathSlug) return pathSlug;
 
-  return selectedCompany ? normalizeCompanyPrefix(selectedCompany.issuePrefix) : null;
+  return selectedCompany ? normalizeCompanySlug(selectedCompany.slug) : null;
 }
 
 export * from "react-router-dom";
@@ -55,8 +55,8 @@ type CompanyLinkProps = React.ComponentProps<typeof RouterDom.Link> & {
 
 export const Link = React.forwardRef<HTMLAnchorElement, CompanyLinkProps>(
   function CompanyLink({ to, disableIssueQuicklook = false, issuePrefetch = null, ...props }, ref) {
-    const companyPrefix = useActiveCompanyPrefix();
-    const resolvedTo = resolveTo(to, companyPrefix);
+    const companySlug = useActiveCompanySlug();
+    const resolvedTo = resolveTo(to, companySlug);
     const issuePathId = parseIssuePathIdFromPath(typeof resolvedTo === "string" ? resolvedTo : resolvedTo.pathname);
 
     if (issuePathId) {
@@ -78,19 +78,19 @@ export const Link = React.forwardRef<HTMLAnchorElement, CompanyLinkProps>(
 
 export const NavLink = React.forwardRef<HTMLAnchorElement, React.ComponentProps<typeof RouterDom.NavLink>>(
   function CompanyNavLink({ to, ...props }, ref) {
-    const companyPrefix = useActiveCompanyPrefix();
-    return <RouterDom.NavLink ref={ref} to={resolveTo(to, companyPrefix)} {...props} />;
+    const companySlug = useActiveCompanySlug();
+    return <RouterDom.NavLink ref={ref} to={resolveTo(to, companySlug)} {...props} />;
   },
 );
 
 export function Navigate({ to, ...props }: React.ComponentProps<typeof RouterDom.Navigate>) {
-  const companyPrefix = useActiveCompanyPrefix();
-  return <RouterDom.Navigate to={resolveTo(to, companyPrefix)} {...props} />;
+  const companySlug = useActiveCompanySlug();
+  return <RouterDom.Navigate to={resolveTo(to, companySlug)} {...props} />;
 }
 
 export function useNavigate(): ReturnType<typeof RouterDom.useNavigate> {
   const navigate = RouterDom.useNavigate();
-  const companyPrefix = useActiveCompanyPrefix();
+  const companySlug = useActiveCompanySlug();
 
   return React.useCallback(
     ((to: To | number, options?: NavigateOptions) => {
@@ -98,8 +98,8 @@ export function useNavigate(): ReturnType<typeof RouterDom.useNavigate> {
         navigate(to);
         return;
       }
-      navigate(resolveTo(to, companyPrefix), options);
+      navigate(resolveTo(to, companySlug), options);
     }) as ReturnType<typeof RouterDom.useNavigate>,
-    [navigate, companyPrefix],
+    [navigate, companySlug],
   );
 }

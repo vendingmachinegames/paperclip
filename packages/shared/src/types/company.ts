@@ -2,9 +2,11 @@ import type { CompanyStatus, PauseReason } from "../constants.js";
 
 export interface Company {
   id: string;
+  slug: string;
   name: string;
   description: string | null;
   status: CompanyStatus;
+  isDraft: boolean;
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   issuePrefix: string;

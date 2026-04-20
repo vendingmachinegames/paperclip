@@ -69,9 +69,9 @@ export function useCompanyPageMemory() {
         const paths = getCompanyPaths();
         const targetPath = sanitizeRememberedPathForCompany({
           path: paths[selectedCompanyId],
-          companyPrefix: selectedCompany.issuePrefix,
+          companyIssuePrefix: selectedCompany.issuePrefix,
         });
-        navigate(`/${selectedCompany.issuePrefix}${targetPath}`, { replace: true });
+        navigate(`/${selectedCompany.slug}${targetPath}`, { replace: true });
       }
     }
     prevCompanyId.current = selectedCompanyId;

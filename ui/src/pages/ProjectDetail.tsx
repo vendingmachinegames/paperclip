@@ -447,8 +447,8 @@ function ProjectWorkspacesContent({
 /* ── Main project page ── */
 
 export function ProjectDetail() {
-  const { companyPrefix, projectId, filter } = useParams<{
-    companyPrefix?: string;
+  const { companySlug, projectId, filter } = useParams<{
+    companySlug?: string;
     projectId: string;
     filter?: string;
   }>();
@@ -464,10 +464,10 @@ export function ProjectDetail() {
   const fieldSaveTimers = useRef<Partial<Record<ProjectConfigFieldKey, ReturnType<typeof setTimeout>>>>({});
   const routeProjectRef = projectId ?? "";
   const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
+    if (!companySlug) return null;
+    const requestedSlug = companySlug.toLowerCase();
+    return companies.find((company) => company.slug.toLowerCase() === requestedSlug)?.id ?? null;
+  }, [companies, companySlug]);
   const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
   const canFetchProject = routeProjectRef.length > 0 && (isUuidLike(routeProjectRef) || Boolean(lookupCompanyId));
   const activeRouteTab = routeProjectRef ? resolveProjectTab(location.pathname, routeProjectRef) : null;
@@ -828,7 +828,7 @@ export function ProjectDetail() {
         entityType="project"
         context={{
           companyId: resolvedCompanyId ?? null,
-          companyPrefix: companyPrefix ?? null,
+          companySlug: companySlug ?? null,
           projectId: project.id,
           projectRef: canonicalProjectRef,
           entityId: project.id,
@@ -844,7 +844,7 @@ export function ProjectDetail() {
         entityType="project"
         context={{
           companyId: resolvedCompanyId ?? null,
-          companyPrefix: companyPrefix ?? null,
+          companySlug: companySlug ?? null,
           projectId: project.id,
           projectRef: canonicalProjectRef,
           entityId: project.id,
@@ -934,7 +934,7 @@ export function ProjectDetail() {
           slot={activePluginTab.slot}
           context={{
             companyId: resolvedCompanyId,
-            companyPrefix: companyPrefix ?? null,
+            companySlug: companySlug ?? null,
             projectId: project.id,
             projectRef: canonicalProjectRef,
             entityId: project.id,

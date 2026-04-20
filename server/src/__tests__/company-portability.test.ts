@@ -68,6 +68,10 @@ vi.mock("../services/companies.js", () => ({
   companyService: () => companySvc,
 }));
 
+vi.mock("../services/boardroom.js", () => ({
+  boardroomService: () => ({ getOrCreate: vi.fn(), findForCompany: vi.fn(), create: vi.fn() }),
+}));
+
 vi.mock("../services/agents.js", () => ({
   agentService: () => agentSvc,
 }));

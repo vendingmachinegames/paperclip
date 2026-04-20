@@ -17,10 +17,13 @@ export {
 } from "./budget.js";
 
 export {
+  companySlugSchema,
   createCompanySchema,
+  createDraftCompanySchema,
   updateCompanySchema,
   updateCompanyBrandingSchema,
   type CreateCompany,
+  type CreateDraftCompany,
   type UpdateCompany,
   type UpdateCompanyBranding,
 } from "./company.js";

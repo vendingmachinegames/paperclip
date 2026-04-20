@@ -1,8 +1,10 @@
+import { randomBytes } from "node:crypto";
 import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   companies,
   companyLogos,
+  companySlugRedirects,
   assets,
   agents,
   agentApiKeys,
@@ -32,12 +34,18 @@ import { notFound, unprocessable } from "../errors.js";
 
 export function companyService(db: Db) {
   const ISSUE_PREFIX_FALLBACK = "CMP";
+  const SLUG_FALLBACK = "company";
+  const NANO_ALPHABET = "abcdefghjkmnpqrstvwxyz23456789";
 
   const companySelection = {
     id: companies.id,
+    slug: companies.slug,
     name: companies.name,
     description: companies.description,
     status: companies.status,
+    isDraft: companies.isDraft,
+    pauseReason: companies.pauseReason,
+    pausedAt: companies.pausedAt,
     issuePrefix: companies.issuePrefix,
     issueCounter: companies.issueCounter,
     budgetMonthlyCents: companies.budgetMonthlyCents,
@@ -120,7 +128,26 @@ export function companyService(db: Db) {
     return "A".repeat(attempt - 1);
   }
 
-  function isIssuePrefixConflict(error: unknown) {
+  function deriveSlugBase(name: string) {
+    const normalized = name
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+    return normalized || SLUG_FALLBACK;
+  }
+
+  function nanoSuffix(len = 6) {
+    const bytes = randomBytes(len);
+    let out = "";
+    for (let i = 0; i < len; i += 1) {
+      out += NANO_ALPHABET[bytes[i]! % NANO_ALPHABET.length];
+    }
+    return out;
+  }
+
+  function matchesUniqueConstraint(error: unknown, name: string) {
     const constraint = typeof error === "object" && error !== null && "constraint" in error
       ? (error as { constraint?: string }).constraint
       : typeof error === "object" && error !== null && "constraint_name" in error
@@ -130,26 +157,62 @@ export function companyService(db: Db) {
       && error !== null
       && "code" in error
       && (error as { code?: string }).code === "23505"
-      && constraint === "companies_issue_prefix_idx";
+      && constraint === name;
   }
 
-  async function createCompanyWithUniquePrefix(data: typeof companies.$inferInsert) {
-    const base = deriveIssuePrefixBase(data.name);
-    let suffix = 1;
-    while (suffix < 10000) {
-      const candidate = `${base}${suffixForAttempt(suffix)}`;
+  function isIssuePrefixConflict(error: unknown) {
+    return matchesUniqueConstraint(error, "companies_issue_prefix_idx");
+  }
+
+  function isSlugConflict(error: unknown) {
+    return matchesUniqueConstraint(error, "companies_slug_idx");
+  }
+
+  type CompanyCreateInput = Omit<typeof companies.$inferInsert, "slug" | "issuePrefix"> & {
+    slug?: string;
+    issuePrefix?: string;
+    draft?: boolean;
+  };
+
+  async function createCompanyWithUniqueIdentifiers(data: CompanyCreateInput) {
+    const { slug: explicitSlug, issuePrefix: explicitPrefix, draft, ...rest } = data;
+    const isDraft = draft ?? rest.isDraft ?? false;
+    const prefixBase = explicitPrefix ?? deriveIssuePrefixBase(rest.name);
+    let slugBase = explicitSlug ?? (isDraft ? `draft-${nanoSuffix()}` : deriveSlugBase(rest.name));
+    let prefixAttempt = 1;
+    let slugAttempt = 0;
+    let totalAttempts = 0;
+    while (totalAttempts < 10000) {
+      const issuePrefix = explicitPrefix ?? `${prefixBase}${suffixForAttempt(prefixAttempt)}`;
+      const slug = slugAttempt === 0 ? slugBase : `${slugBase}-${slugAttempt + 1}`;
       try {
         const rows = await db
           .insert(companies)
-          .values({ ...data, issuePrefix: candidate })
+          .values({ ...rest, isDraft, slug, issuePrefix })
           .returning();
         return rows[0];
       } catch (error) {
-        if (!isIssuePrefixConflict(error)) throw error;
+        if (isSlugConflict(error)) {
+          if (explicitSlug !== undefined) {
+            throw unprocessable(`Slug "${explicitSlug}" is already in use`);
+          }
+          if (isDraft) {
+            slugBase = `draft-${nanoSuffix()}`;
+          } else {
+            slugAttempt += 1;
+          }
+        } else if (isIssuePrefixConflict(error)) {
+          if (explicitPrefix !== undefined) {
+            throw unprocessable(`Issue prefix "${explicitPrefix}" is already in use`);
+          }
+          prefixAttempt += 1;
+        } else {
+          throw error;
+        }
       }
-      suffix += 1;
+      totalAttempts += 1;
     }
-    throw new Error("Unable to allocate unique issue prefix");
+    throw new Error("Unable to allocate unique company identifiers");
   }
 
   return {
@@ -168,8 +231,31 @@ export function companyService(db: Db) {
       return enrichCompany(hydrated);
     },
 
-    create: async (data: typeof companies.$inferInsert) => {
-      const created = await createCompanyWithUniquePrefix(data);
+    getBySlug: async (slug: string) => {
+      const normalized = slug.toLowerCase();
+      const liveRow = await getCompanyQuery(db)
+        .where(eq(companies.slug, normalized))
+        .then((rows) => rows[0] ?? null);
+      if (liveRow) {
+        const [hydrated] = await hydrateCompanySpend([liveRow], db);
+        return { company: enrichCompany(hydrated), redirected: false as const };
+      }
+      const redir = await db
+        .select({ companyId: companySlugRedirects.companyId })
+        .from(companySlugRedirects)
+        .where(eq(companySlugRedirects.oldSlug, normalized))
+        .limit(1);
+      if (redir.length === 0) return null;
+      const resolved = await getCompanyQuery(db)
+        .where(eq(companies.id, redir[0]!.companyId))
+        .then((rows) => rows[0] ?? null);
+      if (!resolved) return null;
+      const [hydrated] = await hydrateCompanySpend([resolved], db);
+      return { company: enrichCompany(hydrated), redirected: true as const };
+    },
+
+    create: async (data: CompanyCreateInput) => {
+      const created = await createCompanyWithUniqueIdentifiers(data);
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
         .then((rows) => rows[0] ?? null);
@@ -202,12 +288,39 @@ export function companyService(db: Db) {
           }
         }
 
-        const updated = await tx
-          .update(companies)
-          .set({ ...companyPatch, updatedAt: new Date() })
-          .where(eq(companies.id, id))
-          .returning()
-          .then((rows) => rows[0] ?? null);
+        const slugChanging =
+          companyPatch.slug !== undefined && companyPatch.slug !== existing.slug;
+        if (slugChanging) {
+          await tx
+            .insert(companySlugRedirects)
+            .values({
+              oldSlug: existing.slug,
+              companyId: id,
+              retiredAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: companySlugRedirects.oldSlug,
+              set: { companyId: id, retiredAt: new Date() },
+            });
+          await tx
+            .delete(companySlugRedirects)
+            .where(eq(companySlugRedirects.oldSlug, companyPatch.slug!));
+        }
+
+        let updated: typeof companies.$inferSelect | null = null;
+        try {
+          updated = await tx
+            .update(companies)
+            .set({ ...companyPatch, updatedAt: new Date() })
+            .where(eq(companies.id, id))
+            .returning()
+            .then((rows) => rows[0] ?? null);
+        } catch (error) {
+          if (isSlugConflict(error)) {
+            throw unprocessable(`Slug "${companyPatch.slug}" is already in use`);
+          }
+          throw error;
+        }
         if (!updated) return null;
 
         if (logoAssetId === null) {

@@ -1,6 +1,7 @@
 import {
   Inbox,
   CircleDot,
+  MessagesSquare,
   Target,
   LayoutDashboard,
   DollarSign,
@@ -43,7 +44,7 @@ export function Sidebar() {
 
   const pluginContext = {
     companyId: selectedCompanyId,
-    companyPrefix: selectedCompany?.issuePrefix ?? null,
+    companySlug: selectedCompany?.slug ?? null,
   };
 
   return (
@@ -80,6 +81,7 @@ export function Sidebar() {
             <span className="truncate">New Issue</span>
           </button>
           <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/boardroom" label="Boardroom" icon={MessagesSquare} />
           <SidebarNavItem
             to="/inbox"
             label="Inbox"

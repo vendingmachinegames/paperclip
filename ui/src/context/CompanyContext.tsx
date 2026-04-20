@@ -59,6 +59,20 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     [companies],
   );
 
+  // Clear a stale selectedCompanyId when the referenced company no
+  // longer exists (e.g. DB wiped between sessions, company deleted in
+  // another tab). Otherwise downstream queries fire for a ghost ID and
+  // the server 500s on FK-violating side effects (skills sync, etc.).
+  useEffect(() => {
+    if (isLoading) return;
+    if (!selectedCompanyId) return;
+    const stillExists = companies.some((c) => c.id === selectedCompanyId);
+    if (!stillExists) {
+      setSelectedCompanyIdState(null);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, [companies, isLoading, selectedCompanyId]);
+
   // Auto-select first company when list loads
   useEffect(() => {
     if (companies.length === 0) return;

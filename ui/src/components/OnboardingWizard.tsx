@@ -40,6 +40,8 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
+import { DEFAULT_OLLAMA_MODEL } from "@paperclipai/adapter-ollama-local";
+import { OllamaModelPicker } from "../adapters/ollama-local/model-picker";
 import { resolveRouteOnboardingOptions } from "../lib/onboarding-route";
 import { AsciiArtAnimation } from "./AsciiArtAnimation";
 import {
@@ -71,18 +73,18 @@ export function OnboardingWizard() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
-  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
+  const { companySlug } = useParams<{ companySlug?: string }>();
   const [routeDismissed, setRouteDismissed] = useState(false);
 
   // Sync disabled adapter types from server so adapter grid filters them out
   const disabledTypes = useDisabledAdaptersSync();
 
   const routeOnboardingOptions =
-    companyPrefix && companiesLoading
+    companySlug && companiesLoading
       ? null
       : resolveRouteOnboardingOptions({
           pathname: location.pathname,
-          companyPrefix,
+          companySlug,
           companies,
         });
   const effectiveOnboardingOpen =
@@ -141,7 +143,7 @@ export function OnboardingWizard() {
   const [createdCompanyId, setCreatedCompanyId] = useState<string | null>(
     existingCompanyId ?? null
   );
-  const [createdCompanyPrefix, setCreatedCompanyPrefix] = useState<
+  const [createdCompanySlug, setCreatedCompanySlug] = useState<
     string | null
   >(null);
   const [createdCompanyGoalId, setCreatedCompanyGoalId] = useState<string | null>(
@@ -163,7 +165,7 @@ export function OnboardingWizard() {
     const cId = effectiveOnboardingOptions.companyId ?? null;
     setStep(effectiveOnboardingOptions.initialStep ?? 1);
     setCreatedCompanyId(cId);
-    setCreatedCompanyPrefix(null);
+    setCreatedCompanySlug(null);
     setCreatedCompanyGoalId(null);
     setCreatedProjectId(null);
     setCreatedAgentId(null);
@@ -176,10 +178,10 @@ export function OnboardingWizard() {
 
   // Backfill issue prefix for an existing company once companies are loaded.
   useEffect(() => {
-    if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanyPrefix) return;
+    if (!effectiveOnboardingOpen || !createdCompanyId || createdCompanySlug) return;
     const company = companies.find((c) => c.id === createdCompanyId);
-    if (company) setCreatedCompanyPrefix(company.issuePrefix);
-  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanyPrefix, companies]);
+    if (company) setCreatedCompanySlug(company.issuePrefix);
+  }, [effectiveOnboardingOpen, createdCompanyId, createdCompanySlug, companies]);
 
   // Resize textarea when step 3 is shown or description changes
   useEffect(() => {
@@ -190,7 +192,8 @@ export function OnboardingWizard() {
     data: adapterModels,
     error: adapterModelsError,
     isLoading: adapterModelsLoading,
-    isFetching: adapterModelsFetching
+    isFetching: adapterModelsFetching,
+    refetch: refetchAdapterModels
   } = useQuery({
     queryKey: createdCompanyId
       ? queryKeys.agents.adapterModels(createdCompanyId, adapterType)
@@ -298,7 +301,7 @@ export function OnboardingWizard() {
     setTaskTitle("Hire your first engineer and create a hiring plan");
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
-    setCreatedCompanyPrefix(null);
+    setCreatedCompanySlug(null);
     setCreatedCompanyGoalId(null);
     setCreatedAgentId(null);
     setCreatedProjectId(null);
@@ -383,7 +386,7 @@ export function OnboardingWizard() {
     try {
       const company = await companiesApi.create({ name: companyName.trim() });
       setCreatedCompanyId(company.id);
-      setCreatedCompanyPrefix(company.issuePrefix);
+      setCreatedCompanySlug(company.issuePrefix);
       setSelectedCompanyId(company.id);
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
 
@@ -578,8 +581,8 @@ export function OnboardingWizard() {
       reset();
       closeOnboarding();
       navigate(
-        createdCompanyPrefix
-          ? `/${createdCompanyPrefix}/issues/${issueRef}`
+        createdCompanySlug
+          ? `/${createdCompanySlug}/issues/${issueRef}`
           : `/issues/${issueRef}`
       );
     } catch (err) {
@@ -820,6 +823,10 @@ export function OnboardingWizard() {
                                 setModel(DEFAULT_CURSOR_LOCAL_MODEL);
                                 return;
                               }
+                              if (nextType === "ollama_local" && !model) {
+                                setModel(DEFAULT_OLLAMA_MODEL);
+                                return;
+                              }
                               if (nextType === "opencode_local") {
                                 if (!model.includes("/")) {
                                   setModel("");
@@ -842,8 +849,21 @@ export function OnboardingWizard() {
                     )}
                   </div>
 
-                  {/* Conditional adapter fields */}
-                  {isLocalAdapter && (
+                  {/* Ollama gets a rich model picker with live download progress. */}
+                  {adapterType === "ollama_local" && (
+                    <div className="space-y-2">
+                      <OllamaModelPicker
+                        installedModels={adapterModels ?? []}
+                        value={model}
+                        onChange={(v) => setModel(v)}
+                        loading={adapterModelsLoading || adapterModelsFetching}
+                        onRefresh={() => void refetchAdapterModels()}
+                      />
+                    </div>
+                  )}
+
+                  {/* Conditional adapter fields for every other local adapter. */}
+                  {isLocalAdapter && adapterType !== "ollama_local" && (
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">

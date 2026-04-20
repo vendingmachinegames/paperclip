@@ -43,6 +43,23 @@ function registerServiceMocks() {
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
     agentService: () => mockAgentService,
+    boardroomService: () => ({ getOrCreate: vi.fn(), findForCompany: vi.fn(), create: vi.fn() }),
+    boardroomCardsService: () => ({
+      create: vi.fn(),
+      getById: vi.fn(),
+      listForIssue: vi.fn(),
+      listForComments: vi.fn(),
+      resolve: vi.fn(),
+    }),
+    issueService: () => ({
+      list: vi.fn(),
+      get: vi.fn(),
+      update: vi.fn(),
+      addComment: vi.fn(),
+      listComments: vi.fn(),
+    }),
+    libraryService: () => ({ listForCompany: vi.fn() }),
+    seedOnboardingCeo: vi.fn(),
     budgetService: () => mockBudgetService,
     companyPortabilityService: () => mockCompanyPortabilityService,
     companyService: () => mockCompanyService,

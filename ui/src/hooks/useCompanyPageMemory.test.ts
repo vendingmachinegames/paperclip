@@ -5,12 +5,22 @@ import {
 } from "../lib/company-page-memory";
 
 const companies = [
-  { id: "for", issuePrefix: "FOR" },
-  { id: "pap", issuePrefix: "PAP" },
+  { id: "for", slug: "for" },
+  { id: "pap", slug: "pap" },
 ];
 
 describe("getRememberedPathOwnerCompanyId", () => {
-  it("uses the route company instead of stale selected-company state for prefixed routes", () => {
+  it("uses the route company instead of stale selected-company state for slug-prefixed routes", () => {
+    expect(
+      getRememberedPathOwnerCompanyId({
+        companies,
+        pathname: "/for/issues/FOR-1",
+        fallbackCompanyId: "pap",
+      }),
+    ).toBe("for");
+  });
+
+  it("matches legacy uppercase URLs by lowercasing the slug segment", () => {
     expect(
       getRememberedPathOwnerCompanyId({
         companies,
@@ -20,11 +30,11 @@ describe("getRememberedPathOwnerCompanyId", () => {
     ).toBe("for");
   });
 
-  it("skips saving when a prefixed route cannot yet be resolved to a known company", () => {
+  it("skips saving when a slug-prefixed route cannot yet be resolved to a known company", () => {
     expect(
       getRememberedPathOwnerCompanyId({
         companies: [],
-        pathname: "/FOR/issues/FOR-1",
+        pathname: "/for/issues/FOR-1",
         fallbackCompanyId: "pap",
       }),
     ).toBeNull();
@@ -40,7 +50,7 @@ describe("getRememberedPathOwnerCompanyId", () => {
     ).toBe("pap");
   });
 
-  it("treats unprefixed skills routes as board routes instead of company prefixes", () => {
+  it("treats unprefixed skills routes as board routes instead of company slugs", () => {
     expect(
       getRememberedPathOwnerCompanyId({
         companies,
@@ -56,7 +66,7 @@ describe("sanitizeRememberedPathForCompany", () => {
     expect(
       sanitizeRememberedPathForCompany({
         path: "/issues/PAP-12",
-        companyPrefix: "PAP",
+        companyIssuePrefix: "PAP",
       }),
     ).toBe("/issues/PAP-12");
   });
@@ -65,7 +75,7 @@ describe("sanitizeRememberedPathForCompany", () => {
     expect(
       sanitizeRememberedPathForCompany({
         path: "/issues/FOR-1",
-        companyPrefix: "PAP",
+        companyIssuePrefix: "PAP",
       }),
     ).toBe("/dashboard");
   });
@@ -74,7 +84,7 @@ describe("sanitizeRememberedPathForCompany", () => {
     expect(
       sanitizeRememberedPathForCompany({
         path: null,
-        companyPrefix: "PAP",
+        companyIssuePrefix: "PAP",
       }),
     ).toBe("/dashboard");
   });
@@ -83,7 +93,7 @@ describe("sanitizeRememberedPathForCompany", () => {
     expect(
       sanitizeRememberedPathForCompany({
         path: "/skills/skill-123/files/SKILL.md",
-        companyPrefix: "PAP",
+        companyIssuePrefix: "PAP",
       }),
     ).toBe("/skills/skill-123/files/SKILL.md");
   });

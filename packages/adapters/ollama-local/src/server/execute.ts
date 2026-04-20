@@ -1,0 +1,939 @@
+import type { AdapterExecutionContext, AdapterExecutionResult } from "@paperclipai/adapter-utils";
+import {
+  asNumber,
+  asString,
+  buildPaperclipEnv,
+  parseObject,
+  renderTemplate,
+} from "@paperclipai/adapter-utils/server-utils";
+import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, type ApiFormat } from "../index.js";
+import { connectMcpServers, type McpBridge, type McpServersConfig, type McpToolSpec } from "./mcp-bridge.js";
+
+const MCP_TOOL_ITERATION_LIMIT = 20;
+
+interface OllamaToolCall {
+  id?: string;
+  function: {
+    name: string;
+    arguments: Record<string, unknown> | string;
+  };
+}
+
+export interface OllamaMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: OllamaToolCall[];
+  tool_call_id?: string;
+}
+
+export interface OllamaChunkLine {
+  type: "chunk";
+  content: string;
+}
+
+export interface OllamaDoneLine {
+  type: "done";
+  model: string;
+  prompt_eval_count: number;
+  eval_count: number;
+  total_duration_ns: number;
+}
+
+export interface OllamaErrorLine {
+  type: "error";
+  message: string;
+}
+
+export type OllamaStdoutLine = OllamaChunkLine | OllamaDoneLine | OllamaErrorLine;
+
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful AI assistant integrated into the Paperclip control plane. Respond concisely and helpfully.";
+
+function buildContextNote(context: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const taskId =
+    (typeof context.taskId === "string" && context.taskId.trim()) ||
+    (typeof context.issueId === "string" && context.issueId.trim()) ||
+    null;
+  const wakeReason =
+    typeof context.wakeReason === "string" && context.wakeReason.trim()
+      ? context.wakeReason.trim()
+      : null;
+  const wakeCommentId =
+    (typeof context.wakeCommentId === "string" && context.wakeCommentId.trim()) ||
+    (typeof context.commentId === "string" && context.commentId.trim()) ||
+    null;
+  const approvalId =
+    typeof context.approvalId === "string" && context.approvalId.trim()
+      ? context.approvalId.trim()
+      : null;
+  const approvalStatus =
+    typeof context.approvalStatus === "string" && context.approvalStatus.trim()
+      ? context.approvalStatus.trim()
+      : null;
+  if (taskId) parts.push(`Task ID: ${taskId}`);
+  if (wakeReason) parts.push(`Wake reason: ${wakeReason}`);
+  if (wakeCommentId) parts.push(`Wake comment ID: ${wakeCommentId}`);
+  if (approvalId) parts.push(`Approval ID: ${approvalId}`);
+  if (approvalStatus) parts.push(`Approval status: ${approvalStatus}`);
+  return parts.join("\n");
+}
+
+/**
+ * Try to resolve a possibly-untagged model name (e.g. "llama3.2") to the exact
+ * name Ollama has installed (e.g. "llama3.2:3b").  Falls back to the original
+ * name if the tags API is unavailable or no match is found.
+ */
+async function resolveModelName(baseUrl: string, requested: string): Promise<string> {
+  try {
+    const res = await fetch(`${baseUrl}/api/tags`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return requested;
+    const body = (await res.json()) as Record<string, unknown>;
+    if (!Array.isArray(body.models)) return requested;
+    const names: string[] = (body.models as Record<string, unknown>[])
+      .filter((m) => typeof m.name === "string")
+      .map((m) => m.name as string);
+
+    // 1. Exact match
+    if (names.includes(requested)) return requested;
+
+    // 2. Exact match ignoring case
+    const lower = requested.toLowerCase();
+    const exact = names.find((n) => n.toLowerCase() === lower);
+    if (exact) return exact;
+
+    // 3. Base-name match (strip tag from both sides)
+    const requestedBase = requested.split(":")[0].toLowerCase();
+    const baseMatch = names.find(
+      (n) => n.split(":")[0].toLowerCase() === requestedBase,
+    );
+    if (baseMatch) return baseMatch;
+  } catch {
+    // network error / timeout — continue with original name
+  }
+  return requested;
+}
+
+/**
+ * Pull the Boardroom (or any conversation-kind issue's) recent comment
+ * thread out of the adapter context. The heartbeat injects this just
+ * before invoking the adapter — see services/heartbeat.ts. Returns null
+ * when the context doesn't carry any (e.g. task-issue wakes), which
+ * makes the adapter fall back to its normal sessionParams rehydration.
+ */
+function readBoardroomMessages(
+  context: Record<string, unknown>,
+  selfAgentId: string,
+): OllamaMessage[] | null {
+  const raw = context.boardroomMessages;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: OllamaMessage[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const body = typeof record.body === "string" ? record.body.trim() : "";
+    if (!body) continue;
+    const authorAgentId = typeof record.authorAgentId === "string" ? record.authorAgentId : null;
+    const isSelf = authorAgentId !== null && authorAgentId === selfAgentId;
+    out.push({
+      role: isSelf ? "assistant" : "user",
+      content: body,
+    });
+  }
+  return out.length > 0 ? out : null;
+}
+
+// ── OpenAI-compatible API helpers ──
+// These let the same adapter call Ollama (/api/chat) or any OpenAI-
+// compatible endpoint (/v1/chat/completions) — MiniMax, Together,
+// Groq, OpenRouter, etc. — with one config toggle.
+
+function chatEndpoint(baseUrl: string, format: ApiFormat): string {
+  return format === "openai"
+    ? `${baseUrl}/v1/chat/completions`
+    : `${baseUrl}/api/chat`;
+}
+
+function chatHeaders(format: ApiFormat, apiKey: string): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (format === "openai" && apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
+function buildChatBody(params: {
+  model: string;
+  messages: OllamaMessage[];
+  stream: boolean;
+  format: ApiFormat;
+  temperature?: number;
+  maxTokens?: number;
+  tools?: Array<Record<string, unknown>>;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: params.model,
+    messages: params.messages,
+    stream: params.stream,
+  };
+  if (params.temperature !== undefined) {
+    if (params.format === "openai") body.temperature = params.temperature;
+    else body.options = { temperature: params.temperature };
+  }
+  if (params.format === "openai" && params.maxTokens) {
+    body.max_tokens = params.maxTokens;
+  }
+  if (params.tools && params.tools.length > 0) {
+    body.tools = params.tools;
+  }
+  return body;
+}
+
+interface ParsedChatResponse {
+  assistantText: string;
+  toolCalls: OllamaToolCall[];
+  promptEvalCount: number;
+  evalCount: number;
+}
+
+function parseNonStreamResponse(parsed: Record<string, unknown>, format: ApiFormat): ParsedChatResponse {
+  if (format === "openai") {
+    const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+    const first = (choices[0] ?? {}) as Record<string, unknown>;
+    const msg = (first.message ?? {}) as Record<string, unknown>;
+    const usage = (parsed.usage ?? {}) as Record<string, unknown>;
+    const toolCalls: OllamaToolCall[] = [];
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls as Array<Record<string, unknown>>) {
+        const fn = (tc.function ?? {}) as Record<string, unknown>;
+        if (typeof fn.name === "string") {
+          toolCalls.push({
+            id: typeof tc.id === "string" ? tc.id : undefined,
+            function: {
+              name: fn.name,
+              arguments: fn.arguments as Record<string, unknown> | string,
+            },
+          });
+        }
+      }
+    }
+    return {
+      assistantText: typeof msg.content === "string" ? msg.content : "",
+      toolCalls,
+      promptEvalCount: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
+      evalCount: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+    };
+  }
+  // Ollama format
+  const messageObj = typeof parsed.message === "object" && parsed.message !== null
+    ? (parsed.message as Record<string, unknown>)
+    : null;
+  const rawToolCalls = Array.isArray(messageObj?.tool_calls) ? (messageObj!.tool_calls as unknown[]) : [];
+  const toolCalls: OllamaToolCall[] = [];
+  for (const raw of rawToolCalls) {
+    if (!raw || typeof raw !== "object") continue;
+    const fn = (raw as Record<string, unknown>).function;
+    if (!fn || typeof fn !== "object") continue;
+    const fnRecord = fn as Record<string, unknown>;
+    if (typeof fnRecord.name !== "string") continue;
+    toolCalls.push({
+      id: typeof (raw as Record<string, unknown>).id === "string" ? String((raw as Record<string, unknown>).id) : undefined,
+      function: { name: fnRecord.name, arguments: fnRecord.arguments as Record<string, unknown> | string },
+    });
+  }
+  return {
+    assistantText: typeof messageObj?.content === "string" ? String(messageObj.content) : "",
+    toolCalls,
+    promptEvalCount: typeof parsed.prompt_eval_count === "number" ? parsed.prompt_eval_count : 0,
+    evalCount: typeof parsed.eval_count === "number" ? parsed.eval_count : 0,
+  };
+}
+
+function extractMcpServers(config: Record<string, unknown>): McpServersConfig | null {
+  const raw = config.mcpServers;
+  if (!raw || typeof raw !== "object") return null;
+  const servers = raw as McpServersConfig;
+  return Object.keys(servers).length > 0 ? servers : null;
+}
+
+function toolSpecsToOllama(specs: McpToolSpec[]): Array<Record<string, unknown>> {
+  return specs.map((spec) => ({
+    type: "function",
+    function: {
+      name: spec.qualifiedName,
+      description: spec.description.slice(0, 1024),
+      parameters: spec.parameters,
+    },
+  }));
+}
+
+function normalizeToolCallArgs(args: Record<string, unknown> | string | undefined): Record<string, unknown> {
+  if (args === undefined || args === null) return {};
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return args;
+}
+
+export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
+  const { runId, agent, runtime, config, context, onLog, onMeta } = ctx;
+
+  const baseUrl = asString(config.baseUrl, DEFAULT_OLLAMA_BASE_URL).replace(/\/$/, "");
+  const rawModel = asString(config.model, DEFAULT_OLLAMA_MODEL).trim();
+  const apiFormat: ApiFormat =
+    typeof config.apiFormat === "string" && config.apiFormat === "openai"
+      ? "openai"
+      : "ollama";
+  const apiKey = typeof config.apiKey === "string" ? config.apiKey.trim() : "";
+  const maxTokens =
+    typeof config.maxTokens === "number" && Number.isFinite(config.maxTokens)
+      ? config.maxTokens
+      : undefined;
+  // Local models can be 30-120s per tool-calling turn on a 32B — the
+  // prior 300s default blew up after two iterations. Bump the adapter
+  // default to 30min for local-LLM realities; users can override via
+  // adapterConfig.timeoutSec. Cloud providers (openai format) are faster
+  // so 5 min is typically enough, but we keep 1800 as the universal default.
+  const timeoutSec = asNumber(config.timeoutSec, 1800);
+  const temperature =
+    typeof config.temperature === "number" && Number.isFinite(config.temperature)
+      ? config.temperature
+      : undefined;
+  const systemPrompt = asString(config.system, DEFAULT_SYSTEM_PROMPT);
+
+  // Resolve the model name against what Ollama actually has installed.
+  // OpenAI-compatible providers use the model string as-is (no local resolution).
+  const model = apiFormat === "ollama"
+    ? await resolveModelName(baseUrl, rawModel)
+    : rawModel;
+
+  // Connect to any MCP servers the agent has configured. If any are set,
+  // we swap from streaming text to a non-streaming tool-calling loop:
+  // streaming tool_calls varies wildly across Ollama versions/models, and
+  // tools plus streaming is the most common source of bugs in the wild.
+  // (See upstream issue #2525.) Local-model latency is usually fine.
+  const mcpServers = extractMcpServers(config);
+  let mcpBridge: McpBridge | null = null;
+  if (mcpServers) {
+    try {
+      mcpBridge = await connectMcpServers(mcpServers, {
+        name: "paperclip-ollama-adapter",
+        version: "0.1.0",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await onLog("stderr", `[mcp-bridge] init failed: ${message}\n`);
+      mcpBridge = null;
+    }
+  }
+  const mcpTools = mcpBridge?.tools ?? [];
+  const useToolLoop = mcpTools.length > 0;
+
+  const promptTemplate = asString(
+    config.promptTemplate,
+    "You are agent {{agent.id}} ({{agent.name}}). Continue your Paperclip work.",
+  );
+  const templateData = {
+    agentId: agent.id,
+    companyId: agent.companyId,
+    runId,
+    company: { id: agent.companyId },
+    agent,
+    run: { id: runId },
+    context,
+  };
+  const renderedPrompt = renderTemplate(promptTemplate, templateData);
+
+  // Annotate user message with Paperclip context
+  const contextNote = buildContextNote(context);
+  const userContent = contextNote.length > 0 ? `${contextNote}\n\n${renderedPrompt}` : renderedPrompt;
+
+  // Boardroom messages take priority — they're a fresh, authoritative
+  // snapshot of the actual chat thread that woke the agent. We DON'T
+  // also stack the agent's per-task session history on top because the
+  // boardroom rows already include this agent's own past replies.
+  const boardroomMessages = readBoardroomMessages(context, agent.id);
+  const sessionParams = parseObject(runtime.sessionParams);
+  const priorMessages: OllamaMessage[] =
+    boardroomMessages
+    ?? (() => {
+      if (!Array.isArray(sessionParams.messages)) return [];
+      return (sessionParams.messages as unknown[]).filter((m): m is OllamaMessage => {
+        if (typeof m !== "object" || m === null || Array.isArray(m)) return false;
+        const record = m as Record<string, unknown>;
+        return typeof record.role === "string" && typeof record.content === "string";
+      });
+    })();
+
+  // For boardroom mode, the latest comment is already the user turn; for
+  // non-boardroom (task issues, scheduled wakes), append the rendered
+  // prompt as a fresh user message.
+  const messages: OllamaMessage[] = boardroomMessages
+    ? [
+        { role: "system", content: systemPrompt + "\n\nYou are participating in a group chat (the Boardroom). Read the conversation above and respond to the most recent message. Address the user (or other agent) directly; don't recap." },
+        ...priorMessages,
+      ]
+    : [
+        { role: "system", content: systemPrompt },
+        ...priorMessages,
+        { role: "user", content: userContent },
+      ];
+
+  // Emit Paperclip-standard env vars for logging/meta (no subprocess, but agent needs context)
+  const paperclipEnv = buildPaperclipEnv(agent);
+
+  if (onMeta) {
+    await onMeta({
+      adapterType: "ollama_local",
+      command: `POST ${baseUrl}/api/chat`,
+      cwd: process.cwd(),
+      commandNotes: [
+        `Model: ${model}`,
+        `Prior conversation turns: ${Math.floor(priorMessages.length / 2)}`,
+        useToolLoop ? `MCP tools: ${mcpTools.length}` : "Streaming: true",
+      ],
+      commandArgs: [],
+      env: {
+        PAPERCLIP_AGENT_ID: paperclipEnv.PAPERCLIP_AGENT_ID ?? agent.id,
+        PAPERCLIP_COMPANY_ID: paperclipEnv.PAPERCLIP_COMPANY_ID ?? agent.companyId,
+      },
+      prompt: userContent,
+      promptMetrics: {
+        promptChars: userContent.length,
+        heartbeatPromptChars: renderedPrompt.length,
+      },
+      context,
+    });
+  }
+
+  // Set up AbortController for timeout
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutHandle =
+    timeoutSec > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutSec * 1000)
+      : null;
+
+  let assistantContent = "";
+  let promptEvalCount = 0;
+  let evalCount = 0;
+  let exitCode: number | null = null;
+  let errorMessage: string | null = null;
+
+  try {
+    if (useToolLoop && mcpBridge) {
+      const outcome = await runToolLoop({
+        baseUrl,
+        model,
+        messages,
+        temperature,
+        maxTokens,
+        apiFormat,
+        apiKey,
+        tools: toolSpecsToOllama(mcpTools),
+        bridge: mcpBridge,
+        onLog,
+        signal: controller.signal,
+      });
+      assistantContent = outcome.assistantContent;
+      promptEvalCount = outcome.promptEvalCount;
+      evalCount = outcome.evalCount;
+    } else {
+      const requestBody = buildChatBody({
+        model, messages, stream: true, format: apiFormat,
+        temperature, maxTokens,
+      });
+
+      const response = await fetch(chatEndpoint(baseUrl, apiFormat), {
+        method: "POST",
+        headers: chatHeaders(apiFormat, apiKey),
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => "");
+        const errMsg = bodyText.trim() || `HTTP ${response.status} ${response.statusText}`;
+        const errLine: OllamaErrorLine = { type: "error", message: errMsg };
+        await onLog("stderr", JSON.stringify(errLine) + "\n");
+        return {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          errorMessage: `API returned ${response.status}: ${errMsg}`,
+          provider: "ollama",
+          model,
+          resultJson: { error: errMsg },
+        };
+      }
+
+      if (!response.body) {
+        throw new Error("Ollama response has no body");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const rawLine of lines) {
+          let line = rawLine.trim();
+          if (!line) continue;
+
+          // OpenAI SSE framing: lines start with "data: ". Strip the prefix.
+          // "[DONE]" signals end-of-stream in OpenAI format.
+          if (apiFormat === "openai") {
+            if (line === "data: [DONE]") {
+              const doneLine: OllamaDoneLine = {
+                type: "done", model, prompt_eval_count: promptEvalCount,
+                eval_count: evalCount, total_duration_ns: 0,
+              };
+              await onLog("stdout", JSON.stringify(doneLine) + "\n");
+              continue;
+            }
+            if (line.startsWith("data: ")) line = line.slice(6);
+            if (line.startsWith(":")) continue; // SSE comment
+          }
+
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            await onLog("stdout", line + "\n");
+            continue;
+          }
+
+          if (apiFormat === "openai") {
+            // OpenAI streaming: { choices: [{ delta: { content: "..." } }], usage?: {...} }
+            const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+            const delta = ((choices[0] ?? {}) as Record<string, unknown>).delta as Record<string, unknown> | undefined;
+            const contentChunk = typeof delta?.content === "string" ? delta.content : "";
+            if (contentChunk) {
+              assistantContent += contentChunk;
+              const chunkLine: OllamaChunkLine = { type: "chunk", content: contentChunk };
+              await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+            }
+            const usage = parsed.usage as Record<string, unknown> | undefined;
+            if (usage) {
+              if (typeof usage.prompt_tokens === "number") promptEvalCount = usage.prompt_tokens;
+              if (typeof usage.completion_tokens === "number") evalCount = usage.completion_tokens;
+            }
+          } else {
+            // Ollama NDJSON streaming
+            const isDone = parsed.done === true;
+            const messageObj =
+              typeof parsed.message === "object" && parsed.message !== null
+                ? (parsed.message as Record<string, unknown>)
+                : null;
+            const contentChunk =
+              typeof messageObj?.content === "string" ? messageObj.content : "";
+
+            if (!isDone && contentChunk) {
+              assistantContent += contentChunk;
+              const chunkLine: OllamaChunkLine = { type: "chunk", content: contentChunk };
+              await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+            }
+
+            if (isDone) {
+              promptEvalCount =
+                typeof parsed.prompt_eval_count === "number" ? parsed.prompt_eval_count : 0;
+              evalCount = typeof parsed.eval_count === "number" ? parsed.eval_count : 0;
+              const totalDurationNs =
+                typeof parsed.total_duration === "number" ? parsed.total_duration : 0;
+              const doneLine: OllamaDoneLine = {
+                type: "done",
+                model: typeof parsed.model === "string" ? parsed.model : model,
+                prompt_eval_count: promptEvalCount,
+                eval_count: evalCount,
+                total_duration_ns: totalDurationNs,
+              };
+              await onLog("stdout", JSON.stringify(doneLine) + "\n");
+            }
+          }
+        }
+      }
+    }
+
+    exitCode = 0;
+  } catch (err) {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (timedOut) {
+      return {
+        exitCode: null,
+        signal: null,
+        timedOut: true,
+        errorMessage: `Timed out after ${timeoutSec}s`,
+        provider: "ollama",
+        model,
+      };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("fetch failed") ||
+      msg.includes("connect EREFUSED") ||
+      msg.includes("Failed to fetch")
+    ) {
+      const errLine: OllamaErrorLine = {
+        type: "error",
+        message: `Cannot reach Ollama at ${baseUrl}: ${msg}`,
+      };
+      await onLog("stderr", JSON.stringify(errLine) + "\n");
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: `Cannot reach Ollama at ${baseUrl}. Is Ollama running? Run: ollama serve`,
+        errorCode: "ollama_not_running",
+        provider: "ollama",
+        model,
+      };
+    }
+    const errLine: OllamaErrorLine = { type: "error", message: msg };
+    await onLog("stderr", JSON.stringify(errLine) + "\n");
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: msg,
+      provider: "ollama",
+      model,
+    };
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (mcpBridge) {
+      await mcpBridge.close().catch(() => {});
+    }
+  }
+
+  // Build updated session params with appended message history
+  const updatedMessages: OllamaMessage[] = [
+    ...priorMessages,
+    { role: "user", content: userContent },
+    ...(assistantContent ? [{ role: "assistant" as const, content: assistantContent }] : []),
+  ];
+
+  return {
+    exitCode,
+    signal: null,
+    timedOut: false,
+    errorMessage: exitCode === 0 ? null : (errorMessage ?? `Ollama exited with code ${exitCode}`),
+    usage:
+      promptEvalCount || evalCount
+        ? { inputTokens: promptEvalCount, outputTokens: evalCount }
+        : undefined,
+    provider: "ollama",
+    model,
+    billingType: "subscription",
+    sessionParams: updatedMessages.length > 0 ? { messages: updatedMessages } : null,
+    summary: assistantContent.trim() || null,
+  };
+}
+
+interface ToolLoopParams {
+  baseUrl: string;
+  model: string;
+  messages: OllamaMessage[];
+  temperature: number | undefined;
+  maxTokens: number | undefined;
+  apiFormat: ApiFormat;
+  apiKey: string;
+  tools: Array<Record<string, unknown>>;
+  bridge: McpBridge;
+  onLog: AdapterExecutionContext["onLog"];
+  signal: AbortSignal;
+}
+
+interface ToolLoopOutcome {
+  assistantContent: string;
+  promptEvalCount: number;
+  evalCount: number;
+}
+
+/**
+ * Non-streaming tool-calling loop. Streaming + tool_calls is brittle
+ * across Ollama versions (upstream issue #2525), so we accept the
+ * latency cost to get correctness.
+ *
+ * Each iteration POSTs the growing message list, executes any
+ * tool_calls the model returned, appends `tool` role messages with
+ * results, and loops until the model returns a turn with no tool_calls
+ * or MCP_TOOL_ITERATION_LIMIT is reached.
+ */
+async function runToolLoop(params: ToolLoopParams): Promise<ToolLoopOutcome> {
+  const { baseUrl, model, messages, temperature, maxTokens, apiFormat, apiKey, tools, bridge, onLog, signal } = params;
+
+  let totalPromptEval = 0;
+  let totalEval = 0;
+  let finalAssistantContent = "";
+
+  for (let iter = 0; iter < MCP_TOOL_ITERATION_LIMIT; iter += 1) {
+    const requestBody = buildChatBody({
+      model, messages, stream: false, format: apiFormat,
+      temperature, maxTokens, tools,
+    });
+
+    const response = await fetch(chatEndpoint(baseUrl, apiFormat), {
+      method: "POST",
+      headers: chatHeaders(apiFormat, apiKey),
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "");
+      throw new Error(
+        `API returned ${response.status}: ${bodyText.trim() || response.statusText}`,
+      );
+    }
+
+    const parsed = (await response.json()) as Record<string, unknown>;
+    const pr = parseNonStreamResponse(parsed, apiFormat);
+    totalPromptEval += pr.promptEvalCount;
+    totalEval += pr.evalCount;
+
+    const assistantText = pr.assistantText;
+    const toolCallsNormalized: OllamaToolCall[] = [...pr.toolCalls];
+
+    // Fallback: code-tuned models (qwen2.5-coder etc.) sometimes emit
+    // tool calls as JSON in the message content instead of via the
+    // structured tool_calls field. Try to recover them, but only when
+    // the structured field was empty — never override an explicit call.
+    let parsedFromText = false;
+    let cleanedAssistantText = assistantText;
+    if (toolCallsNormalized.length === 0 && assistantText) {
+      const recovered = extractTextEmittedToolCalls(assistantText, tools);
+      if (recovered.calls.length > 0) {
+        toolCallsNormalized.push(...recovered.calls);
+        cleanedAssistantText = recovered.remainingText;
+        parsedFromText = true;
+        await onLog(
+          "stderr",
+          `[mcp] recovered ${recovered.calls.length} tool call(s) from message text (model emitted JSON instead of tool_calls)\n`,
+        );
+      }
+    }
+
+    // Record assistant turn (visible in UI stream) even if it's a
+    // tool-call-only turn with empty content. When we recovered tool
+    // calls from text, hide the JSON from the chat — only the cleaned
+    // text (often empty) belongs in the visible stream.
+    const visibleText = parsedFromText ? cleanedAssistantText : assistantText;
+    if (visibleText) {
+      const chunkLine: OllamaChunkLine = { type: "chunk", content: visibleText };
+      await onLog("stdout", JSON.stringify(chunkLine) + "\n");
+      finalAssistantContent = visibleText;
+    }
+
+    const assistantMessage: OllamaMessage = {
+      role: "assistant",
+      content: visibleText,
+    };
+    if (toolCallsNormalized.length > 0) {
+      assistantMessage.tool_calls = toolCallsNormalized;
+    }
+    messages.push(assistantMessage);
+
+    if (toolCallsNormalized.length === 0) {
+      // Model stopped requesting tools — this was the final turn.
+      await onLog(
+        "stdout",
+        JSON.stringify({
+          type: "done",
+          model,
+          prompt_eval_count: totalPromptEval,
+          eval_count: totalEval,
+          total_duration_ns: 0,
+        } satisfies OllamaDoneLine) + "\n",
+      );
+      return {
+        assistantContent: finalAssistantContent,
+        promptEvalCount: totalPromptEval,
+        evalCount: totalEval,
+      };
+    }
+
+    // Execute each tool call; append results as `tool` messages.
+    for (const call of toolCallsNormalized) {
+      const args = normalizeToolCallArgs(call.function.arguments);
+      const result = await bridge.callTool(call.function.name, args);
+      messages.push({
+        role: "tool",
+        content: result || "(empty tool result)",
+        tool_call_id: call.id,
+      });
+      await onLog(
+        "stderr",
+        `[mcp] ${call.function.name} -> ${result.length} chars\n`,
+      );
+    }
+  }
+
+  // Hit the safety limit. Record what we have and note the truncation.
+  await onLog(
+    "stderr",
+    `[mcp] tool-call iteration limit (${MCP_TOOL_ITERATION_LIMIT}) reached; truncating.\n`,
+  );
+  return {
+    assistantContent:
+      finalAssistantContent
+      || `(reached ${MCP_TOOL_ITERATION_LIMIT}-iteration tool-call safety limit without final answer)`,
+    promptEvalCount: totalPromptEval,
+    evalCount: totalEval,
+  };
+}
+
+/**
+ * Some local models (qwen2.5-coder, occasionally llama3.2 + others)
+ * emit tool calls as a JSON object inside the assistant content
+ * instead of via Ollama's structured `tool_calls` field — e.g.:
+ *
+ *   {"name": "gmail__search_emails", "arguments": {"query": "..."}}
+ *
+ * When that happens the structured field comes back empty, the
+ * adapter sees no tool to execute, and the JSON ends up rendered as
+ * raw text in the Boardroom chat. This helper scans the message body
+ * for those literal JSON shapes and lifts them out into proper tool
+ * calls. We only accept matches whose `name` is one of the tools we
+ * actually registered with the model — random JSON in the reply
+ * stays put.
+ *
+ * Supported shapes (most common across model families):
+ *   {"name": "<tool>", "arguments": {...}}
+ *   {"name": "<tool>", "parameters": {...}}
+ *   {"function": {"name": "<tool>", "arguments": {...}}}
+ *   ```json\n{...}\n```  (fenced)
+ *   ```\n{...}\n```      (unlabeled fence)
+ */
+function extractTextEmittedToolCalls(
+  text: string,
+  registeredTools: Array<Record<string, unknown>>,
+): { calls: OllamaToolCall[]; remainingText: string } {
+  const knownNames = new Set<string>();
+  for (const t of registeredTools) {
+    const fn = t.function as Record<string, unknown> | undefined;
+    if (fn && typeof fn.name === "string") knownNames.add(fn.name);
+  }
+  if (knownNames.size === 0) return { calls: [], remainingText: text };
+
+  const calls: OllamaToolCall[] = [];
+  let remaining = text;
+
+  // Strip any fenced JSON block (```json ... ``` or ``` ... ```) that
+  // contains a registered tool call, then also handle bare-object
+  // emissions outside of fences.
+  const fenceRegex = /```(?:json)?\s*\n([\s\S]*?)```/g;
+  remaining = remaining.replace(fenceRegex, (whole, inner: string) => {
+    const trimmed = inner.trim();
+    const recovered = tryParseToolCallObject(trimmed, knownNames);
+    if (recovered) {
+      calls.push(recovered);
+      return "";
+    }
+    return whole;
+  });
+
+  // Scan for top-level JSON objects in the (possibly already cleaned)
+  // remainder. Use a brace-balanced scanner so nested objects in
+  // arguments survive intact.
+  const objects = extractTopLevelJsonObjects(remaining);
+  for (const obj of objects) {
+    const recovered = tryParseToolCallObject(obj.json, knownNames);
+    if (recovered) {
+      calls.push(recovered);
+      remaining = remaining.replace(obj.json, "");
+    }
+  }
+
+  return { calls, remainingText: remaining.replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+function tryParseToolCallObject(raw: string, knownNames: Set<string>): OllamaToolCall | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+
+  // Shape A: {"name": "...", "arguments": {...}} or {"name": "...", "parameters": {...}}
+  let name: string | null = null;
+  let args: unknown = undefined;
+  if (typeof obj.name === "string") {
+    name = obj.name;
+    args = obj.arguments ?? obj.parameters;
+  }
+  // Shape B: {"function": {"name": "...", "arguments": ...}}
+  if (!name && obj.function && typeof obj.function === "object") {
+    const fn = obj.function as Record<string, unknown>;
+    if (typeof fn.name === "string") {
+      name = fn.name;
+      args = fn.arguments ?? fn.parameters;
+    }
+  }
+  if (!name || !knownNames.has(name)) return null;
+
+  return {
+    function: {
+      name,
+      arguments: (args ?? {}) as Record<string, unknown> | string,
+    },
+  };
+}
+
+function extractTopLevelJsonObjects(text: string): Array<{ json: string; start: number; end: number }> {
+  const out: Array<{ json: string; start: number; end: number }> = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "{") {
+      i += 1;
+      continue;
+    }
+    // Brace-balanced scan, respecting strings.
+    let depth = 0;
+    let j = i;
+    let inString = false;
+    let escape = false;
+    for (; j < text.length; j += 1) {
+      const ch = text[j];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          out.push({ json: text.slice(i, j + 1), start: i, end: j + 1 });
+          i = j + 1;
+          break;
+        }
+      }
+    }
+    if (depth !== 0) break; // unbalanced — stop scanning
+    if (j >= text.length) break;
+  }
+  return out;
+}

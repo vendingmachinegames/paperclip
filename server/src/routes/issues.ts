@@ -2345,6 +2345,62 @@ export function issueRoutes(
         });
       }
 
+      // Boardroom auto-wake: for conversation-kind issues, a user reply
+      // without an explicit @mention should still wake the agents so the
+      // chat feels like a chat instead of a bulletin board. Task issues
+      // keep the old @mention-required behavior (an assignee already
+      // drives those via the assigneeId branch above).
+      //
+      // Guard against typo'd mentions (e.g. "@A" when no agent matches):
+      // if the message contains `@` but we resolved zero agents from it,
+      // treat that as an attempted mention that missed, not as "no
+      // mention at all" — and do NOT mass-wake everyone. Otherwise every
+      // agent in the company would post "not directed at me" noise.
+      const containsMentionMarker = /\B@\S/.test(req.body.body);
+      const attemptedButUnresolvedMention =
+        containsMentionMarker && wakeups.size === 0 && mentionedIds.length === 0;
+      if (
+        currentIssue.kind === "conversation"
+        && !actorIsAgent
+        && wakeups.size === 0
+        && !attemptedButUnresolvedMention
+      ) {
+        const allAgents = await agentsSvc.list(currentIssue.companyId);
+        // Prefer waking the CEO alone when there's one in the company —
+        // they're the natural "room host" for mention-less messages and
+        // can @-dispatch to a specific teammate if needed. Waking every
+        // agent on every mention-less comment causes every domain expert
+        // to try to answer, which confuses users: an ArtDirector has no
+        // guardrail to stay silent on a devops question, so they chime
+        // in anyway. Companies with no CEO fall back to the old mass-
+        // wake behaviour (early drafts, solo-CEO onboarding, etc.).
+        const ceoAgents = allAgents.filter(
+          (a) => a.role === "ceo" && a.status !== "terminated" && a.status !== "paused",
+        );
+        const agentsToWake =
+          ceoAgents.length > 0
+            ? ceoAgents
+            : allAgents.filter((a) => a.status !== "terminated" && a.status !== "paused");
+        for (const agent of agentsToWake) {
+          wakeups.set(agent.id, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "conversation_comment",
+            payload: { issueId: id, commentId: comment.id },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: id,
+              taskId: id,
+              commentId: comment.id,
+              wakeCommentId: comment.id,
+              wakeReason: "conversation_comment",
+              source: "comment.conversation",
+            },
+          });
+        }
+      }
+
       for (const [agentId, wakeup] of wakeups.entries()) {
         heartbeat
           .wakeup(agentId, wakeup)

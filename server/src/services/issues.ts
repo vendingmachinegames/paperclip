@@ -4,6 +4,7 @@ import {
   activityLog,
   agents,
   assets,
+  boardroomCards,
   companies,
   companyMemberships,
   documents,
@@ -23,7 +24,12 @@ import {
   projects,
 } from "@paperclipai/db";
 import type { IssueRelationIssueSummary } from "@paperclipai/shared";
-import { extractAgentMentionIds, extractProjectMentionIds, isUuidLike } from "@paperclipai/shared";
+import {
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  isUuidLike,
+  parseBoardroomCardBlocks,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -911,7 +917,7 @@ export function issueService(db: Db) {
 
   return {
     list: async (companyId: string, filters?: IssueFilters) => {
-      const conditions = [eq(issues.companyId, companyId)];
+      const conditions = [eq(issues.companyId, companyId), eq(issues.kind, "task")];
       const limit = typeof filters?.limit === "number" && Number.isFinite(filters.limit)
         ? Math.max(1, Math.floor(filters.limit))
         : undefined;
@@ -1160,6 +1166,7 @@ export function issueService(db: Db) {
     countUnreadTouchedByUser: async (companyId: string, userId: string, status?: string) => {
       const conditions = [
         eq(issues.companyId, companyId),
+        eq(issues.kind, "task"),
         isNull(issues.hiddenAt),
         unreadForUserCondition(companyId, userId),
         ne(issues.originKind, "routine_execution"),
@@ -2146,6 +2153,29 @@ export function issueService(db: Db) {
         .update(issues)
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
+
+      // If an agent posted, look for fenced `paperclip-card` blocks in the
+      // body and persist them as boardroom_cards. Parse errors are tolerated
+      // — we still return the comment so the agent's turn isn't rolled back.
+      if (comment && actor.agentId) {
+        const { cards } = parseBoardroomCardBlocks(redactedBody);
+        if (cards.length > 0) {
+          try {
+            await db.insert(boardroomCards).values(
+              cards.map((card) => ({
+                companyId: issue.companyId,
+                issueId,
+                commentId: comment.id,
+                createdByAgentId: actor.agentId ?? null,
+                kind: card.kind,
+                payload: card.payload,
+              })),
+            );
+          } catch {
+            // Swallow — a malformed card shouldn't block the comment itself.
+          }
+        }
+      }
 
       return redactIssueComment(comment, currentUserRedactionOptions.enabled);
     },

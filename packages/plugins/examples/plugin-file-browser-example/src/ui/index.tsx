@@ -353,7 +353,7 @@ export function FilesLink({ context }: PluginProjectSidebarItemProps) {
   const projectRef = (context as PluginProjectSidebarItemProps["context"] & { projectRef?: string | null })
     .projectRef
     ?? projectId;
-  const prefix = context.companyPrefix ? `/${context.companyPrefix}` : "";
+  const prefix = context.companySlug ? `/${context.companySlug}` : "";
   const tabValue = `plugin:${PLUGIN_KEY}:${FILES_TAB_SLOT_ID}`;
   const href = `${prefix}/projects/${projectRef}?tab=${encodeURIComponent(tabValue)}`;
   const isActive = typeof window !== "undefined" && (() => {
@@ -738,7 +738,7 @@ export function CommentFileLinks({ context }: PluginCommentAnnotationProps) {
   if (mode === "contextMenu" || mode === "none") return null;
   if (!data?.links?.length) return null;
 
-  const prefix = context.companyPrefix ? `/${context.companyPrefix}` : "";
+  const prefix = context.companySlug ? `/${context.companySlug}` : "";
   const projectId = context.projectId;
 
   return (
@@ -787,7 +787,7 @@ export function CommentOpenFiles({ context }: PluginCommentContextMenuItemProps)
   if (mode === "annotation" || mode === "none") return null;
   if (!data?.links?.length) return null;
 
-  const prefix = context.companyPrefix ? `/${context.companyPrefix}` : "";
+  const prefix = context.companySlug ? `/${context.companySlug}` : "";
   const projectId = context.projectId;
 
   return (

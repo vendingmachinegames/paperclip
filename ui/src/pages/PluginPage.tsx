@@ -12,35 +12,35 @@ import { NotFoundPage } from "./NotFound";
 
 /**
  * Company-context plugin page. Renders a plugin's `page` slot at
- * `/:companyPrefix/plugins/:pluginId` when the plugin declares a page slot
+ * `/:companySlug/plugins/:pluginId` when the plugin declares a page slot
  * and is enabled for that company.
  *
  * @see doc/plugins/PLUGIN_SPEC.md §19.2 — Company-Context Routes
  * @see doc/plugins/PLUGIN_SPEC.md §24.4 — Company-Context Plugin Page
  */
 export function PluginPage() {
-  const { companyPrefix: routeCompanyPrefix, pluginId, pluginRoutePath } = useParams<{
-    companyPrefix?: string;
+  const { companySlug: routeCompanySlug, pluginId, pluginRoutePath } = useParams<{
+    companySlug?: string;
     pluginId?: string;
     pluginRoutePath?: string;
   }>();
   const { companies, selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const routeCompany = useMemo(() => {
-    if (!routeCompanyPrefix) return null;
-    const requested = routeCompanyPrefix.toUpperCase();
-    return companies.find((c) => c.issuePrefix.toUpperCase() === requested) ?? null;
-  }, [companies, routeCompanyPrefix]);
-  const hasInvalidCompanyPrefix = Boolean(routeCompanyPrefix) && !routeCompany;
+    if (!routeCompanySlug) return null;
+    const requested = routeCompanySlug.toLowerCase();
+    return companies.find((c) => c.slug.toLowerCase() === requested) ?? null;
+  }, [companies, routeCompanySlug]);
+  const hasInvalidCompanyPrefix = Boolean(routeCompanySlug) && !routeCompany;
 
   const resolvedCompanyId = useMemo(() => {
     if (routeCompany) return routeCompany.id;
-    if (routeCompanyPrefix) return null;
+    if (routeCompanySlug) return null;
     return selectedCompanyId ?? null;
-  }, [routeCompany, routeCompanyPrefix, selectedCompanyId]);
+  }, [routeCompany, routeCompanySlug, selectedCompanyId]);
 
-  const companyPrefix = useMemo(
-    () => (resolvedCompanyId ? companies.find((c) => c.id === resolvedCompanyId)?.issuePrefix ?? null : null),
+  const companySlug = useMemo(
+    () => (resolvedCompanyId ? companies.find((c) => c.id === resolvedCompanyId)?.slug ?? null : null),
     [companies, resolvedCompanyId],
   );
 
@@ -84,9 +84,9 @@ export function PluginPage() {
   const context = useMemo(
     () => ({
       companyId: resolvedCompanyId ?? null,
-      companyPrefix,
+      companySlug,
     }),
-    [resolvedCompanyId, companyPrefix],
+    [resolvedCompanyId, companySlug],
   );
 
   useEffect(() => {
@@ -96,11 +96,11 @@ export function PluginPage() {
         { label: pageSlot.pluginDisplayName },
       ]);
     }
-  }, [pageSlot, companyPrefix, setBreadcrumbs]);
+  }, [pageSlot, companySlug, setBreadcrumbs]);
 
   if (!resolvedCompanyId) {
     if (hasInvalidCompanyPrefix) {
-      return <NotFoundPage scope="invalid_company_prefix" requestedPrefix={routeCompanyPrefix} />;
+      return <NotFoundPage scope="invalid_company_prefix" requestedPrefix={routeCompanySlug} />;
     }
     return (
       <div className="space-y-4">
@@ -139,7 +139,7 @@ export function PluginPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" asChild>
-          <Link to={companyPrefix ? `/${companyPrefix}/dashboard` : "/dashboard"}>
+          <Link to={companySlug ? `/${companySlug}/dashboard` : "/dashboard"}>
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </Link>

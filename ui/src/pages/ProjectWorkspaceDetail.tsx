@@ -209,8 +209,8 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 export function ProjectWorkspaceDetail() {
-  const { companyPrefix, projectId, workspaceId } = useParams<{
-    companyPrefix?: string;
+  const { companySlug, projectId, workspaceId } = useParams<{
+    companySlug?: string;
     projectId: string;
     workspaceId: string;
   }>();
@@ -225,10 +225,10 @@ export function ProjectWorkspaceDetail() {
   const routeWorkspaceId = workspaceId ?? "";
 
   const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
+    if (!companySlug) return null;
+    const requestedSlug = companySlug.toLowerCase();
+    return companies.find((company) => company.slug.toLowerCase() === requestedSlug)?.id ?? null;
+  }, [companies, companySlug]);
 
   const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
   const canFetchProject = routeProjectRef.length > 0 && (isUuidLike(routeProjectRef) || Boolean(lookupCompanyId));

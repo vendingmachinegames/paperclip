@@ -45,7 +45,7 @@ import {
 
 export type PluginLauncherContext = {
   companyId?: string | null;
-  companyPrefix?: string | null;
+  companySlug?: string | null;
   projectId?: string | null;
   projectRef?: string | null;
   entityId?: string | null;
@@ -139,7 +139,7 @@ function buildLauncherHostContext(
 ): PluginHostContext {
   return {
     companyId: context.companyId ?? null,
-    companyPrefix: context.companyPrefix ?? null,
+    companySlug: context.companySlug ?? null,
     projectId: context.projectId ?? (context.entityType === "project" ? context.entityId ?? null : null),
     entityId: context.entityId ?? null,
     entityType: context.entityType ?? null,

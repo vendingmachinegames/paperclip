@@ -3,6 +3,11 @@ export const queryKeys = {
     all: ["companies"] as const,
     detail: (id: string) => ["companies", id] as const,
     stats: ["companies", "stats"] as const,
+    boardroom: (companyId: string) => ["companies", companyId, "boardroom"] as const,
+    boardroomComments: (companyId: string) =>
+      ["companies", companyId, "boardroom", "comments"] as const,
+    boardroomCards: (companyId: string) =>
+      ["companies", companyId, "boardroom", "cards"] as const,
   },
   companySkills: {
     list: (companyId: string) => ["company-skills", companyId] as const,

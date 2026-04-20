@@ -1,6 +1,8 @@
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
 export {
   COMPANY_STATUSES,
+  COMPANY_SLUG_RESERVED,
+  ISSUE_KINDS,
   DEPLOYMENT_MODES,
   DEPLOYMENT_EXPOSURES,
   BIND_MODES,
@@ -405,7 +407,9 @@ export {
 } from "./validators/index.js";
 
 export {
+  companySlugSchema,
   createCompanySchema,
+  createDraftCompanySchema,
   updateCompanySchema,
   updateCompanyBrandingSchema,
   feedbackTargetTypeSchema,
@@ -413,6 +417,7 @@ export {
   feedbackVoteValueSchema,
   upsertIssueFeedbackVoteSchema,
   type CreateCompany,
+  type CreateDraftCompany,
   type UpdateCompany,
   type UpdateCompanyBranding,
   type UpsertIssueFeedbackVote,
@@ -634,6 +639,14 @@ export {
   type SetPluginState,
   type ListPluginState,
 } from "./validators/index.js";
+
+export {
+  BOARDROOM_CARD_FENCE_TAG,
+  parseBoardroomCardBlocks,
+  stripBoardroomCardBlocks,
+  type ParsedBoardroomCard,
+  type ParseBoardroomCardsResult,
+} from "./boardroom-cards.js";
 
 export { API_PREFIX, API } from "./api.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";

@@ -38,6 +38,7 @@ import { Identity } from "../components/Identity";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
+import { McpServersEditor, type McpServersMap } from "../components/McpServersEditor";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
@@ -223,12 +224,13 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "mcp" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
+  if (value === "mcp") return "mcp";
   if (value === "budget") return "budget";
   if (value === "runs") return value;
   return "dashboard";
@@ -613,8 +615,8 @@ function WorkspaceOperationsSection({
 }
 
 export function AgentDetail() {
-  const { companyPrefix, agentId, tab: urlTab, runId: urlRunId } = useParams<{
-    companyPrefix?: string;
+  const { companySlug, agentId, tab: urlTab, runId: urlRunId } = useParams<{
+    companySlug?: string;
     agentId: string;
     tab?: string;
     runId?: string;
@@ -638,10 +640,10 @@ export function AgentDetail() {
   const { isMobile } = useSidebar();
   const routeAgentRef = agentId ?? "";
   const routeCompanyId = useMemo(() => {
-    if (!companyPrefix) return null;
-    const requestedPrefix = companyPrefix.toUpperCase();
-    return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix)?.id ?? null;
-  }, [companies, companyPrefix]);
+    if (!companySlug) return null;
+    const requestedSlug = companySlug.toLowerCase();
+    return companies.find((company) => company.slug.toLowerCase() === requestedSlug)?.id ?? null;
+  }, [companies, companySlug]);
   const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
   const canFetchAgent = routeAgentRef.length > 0 && (isUuidLike(routeAgentRef) || Boolean(lookupCompanyId));
   const setSaveConfigAction = useCallback((fn: (() => void) | null) => { saveConfigActionRef.current = fn; }, []);
@@ -744,11 +746,13 @@ export function AgentDetail() {
           ? "configuration"
           : activeView === "skills"
             ? "skills"
-            : activeView === "runs"
-              ? "runs"
-              : activeView === "budget"
-                ? "budget"
-              : "dashboard";
+            : activeView === "mcp"
+              ? "mcp"
+              : activeView === "runs"
+                ? "runs"
+                : activeView === "budget"
+                  ? "budget"
+                : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(`/agents/${canonicalAgentRef}/${canonicalTab}`, { replace: true });
       return;
@@ -1008,6 +1012,9 @@ export function AgentDetail() {
               { value: "dashboard", label: "Dashboard" },
               { value: "instructions", label: "Instructions" },
               { value: "skills", label: "Skills" },
+              ...(adapterSupportsMcp(agent.adapterType)
+                ? [{ value: "mcp", label: "MCP Servers" }]
+                : []),
               { value: "configuration", label: "Configuration" },
               { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
@@ -1119,6 +1126,13 @@ export function AgentDetail() {
 
       {activeView === "skills" && (
         <AgentSkillsTab
+          agent={agent}
+          companyId={resolvedCompanyId ?? undefined}
+        />
+      )}
+
+      {activeView === "mcp" && adapterSupportsMcp(agent.adapterType) && (
+        <McpServersTab
           agent={agent}
           companyId={resolvedCompanyId ?? undefined}
         />
@@ -2412,6 +2426,118 @@ function PromptEditorSkeleton() {
     <div className="space-y-3">
       <Skeleton className="h-10 w-full" />
       <Skeleton className="h-[420px] w-full" />
+    </div>
+  );
+}
+
+/* ---- MCP Servers Tab (claude_local + ollama_local) ---- */
+
+const ADAPTERS_WITH_MCP: ReadonlyArray<string> = ["claude_local", "ollama_local"];
+
+function adapterSupportsMcp(adapterType: string | null | undefined): boolean {
+  return typeof adapterType === "string" && ADAPTERS_WITH_MCP.includes(adapterType);
+}
+
+function McpServersTab({
+  agent,
+  companyId,
+}: {
+  agent: AgentDetailRecord;
+  companyId: string | undefined;
+}) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToast();
+  const lastAgentRef = useRef(agent);
+  const [awaitingRefresh, setAwaitingRefresh] = useState(false);
+  const [localServers, setLocalServers] = useState<McpServersMap | undefined>(
+    () => (agent.adapterConfig?.mcpServers ?? undefined) as McpServersMap | undefined,
+  );
+  const [dirty, setDirty] = useState(false);
+
+  // Sync when agent data refreshes from server (after save or external change)
+  useEffect(() => {
+    if (agent !== lastAgentRef.current) {
+      lastAgentRef.current = agent;
+      setLocalServers((agent.adapterConfig?.mcpServers ?? undefined) as McpServersMap | undefined);
+      setDirty(false);
+      setAwaitingRefresh(false);
+    }
+  }, [agent]);
+
+  const updateMcp = useMutation({
+    mutationFn: (servers: McpServersMap | undefined) =>
+      agentsApi.update(
+        agent.id,
+        {
+          // Must send replaceAdapterConfig:true so the MCP tab's save is
+          // authoritative and symmetric with the Configuration tab. The
+          // Config tab already sends replaceAdapterConfig:true; if this
+          // tab sent a shallow patch instead, saving the Config tab
+          // later could silently drop mcpServers when the form's local
+          // `agent.adapterConfig` snapshot was stale (it happened — PA
+          // agent lost its Gmail MCP wiring this way). Spreading
+          // agent.adapterConfig first keeps the intent of "change only
+          // mcpServers"; the flag just makes sure the server doesn't
+          // silently merge on top of whatever's already there.
+          adapterConfig: {
+            ...agent.adapterConfig,
+            mcpServers: servers ?? null,
+          },
+          replaceAdapterConfig: true,
+        },
+        companyId,
+      ),
+    onMutate: () => setAwaitingRefresh(true),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) });
+    },
+    onError: (err) => {
+      setAwaitingRefresh(false);
+      pushToast({
+        title: "Failed to save MCP servers",
+        body: err instanceof Error ? err.message : "Unknown error",
+        tone: "error",
+      });
+    },
+  });
+
+  const isSaving = updateMcp.isPending || awaitingRefresh;
+
+  const handleChange = (servers: McpServersMap | undefined) => {
+    setLocalServers(servers);
+    setDirty(true);
+  };
+
+  const handleCancel = () => {
+    setLocalServers((agent.adapterConfig?.mcpServers ?? undefined) as McpServersMap | undefined);
+    setDirty(false);
+  };
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium">MCP Servers</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Configure Model Context Protocol servers that this agent can use during runs.
+            Each server provides additional tools and data sources to Claude Code via <code className="text-[11px] bg-muted px-1 rounded">--mcp-config</code>.
+          </p>
+        </div>
+      </div>
+
+      <McpServersEditor value={localServers} onChange={handleChange} />
+
+      {dirty && (
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" onClick={() => updateMcp.mutate(localServers)} disabled={isSaving}>
+            {isSaving ? "Saving..." : "Save changes"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleCancel} disabled={isSaving}>
+            Cancel
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
